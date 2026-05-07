@@ -1,0 +1,15 @@
+type,value,description
+sha256,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,Empty file (sample placeholder)
+md5,d41d8cd98f00b204e9800998ecf8427e,Empty file MD5 (sample placeholder)
+sha1,da39a3ee5e6b4b0d3255bfef95601890afd80709,Empty file SHA1 (sample placeholder)
+ip,185.220.101.1,Sample known-bad IP (placeholder)
+ip,45.142.214.219,Sample C2 IP (placeholder)
+domain,malicious-example.com,Sample bad domain (placeholder)
+domain,evil-cdn.xyz,Sample C2 domain (placeholder)
+filename,mimikatz.exe,Credential dumping tool
+filename,procdump64.exe,LSASS dumping (often abused)
+filename,psexec.exe,Lateral movement (often abused)
+filename,nc.exe,Netcat — backdoor / pivot
+filename,rclone.exe,Data exfiltration via cloud
+regkey,HKCU:\Software\Classes\ms-settings\shell\open\command,UAC bypass via fodhelper
+regkey,HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\sethc.exe,Sticky-keys debugger hijack
