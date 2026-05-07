@@ -1,0 +1,783 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ThreatHunter — User Guide</title>
+<style>
+  :root {
+    --bg:        #16161a;
+    --bg-2:      #1d1d22;
+    --bg-3:      #232328;
+    --border:    #2e2e34;
+    --border-hi: #3a3a42;
+    --text:      #d8d8d8;
+    --mute:      #8e8e94;
+    --faint:     #5a5a62;
+    --title:     #ebebeb;
+    --accent:    #d97757;   /* warm coral, matches the TUI */
+    --accent-hi: #eb987c;
+    --ok:        #89c489;
+    --warn:      #e6bc75;
+    --danger:    #e06c75;
+    --info:      #61afef;
+    --code-bg:   #1a1a1f;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .layout { display: grid; grid-template-columns: 260px 1fr; min-height: 100vh; }
+  aside {
+    border-right: 1px solid var(--border);
+    background: var(--bg-2);
+    padding: 28px 22px;
+    position: sticky; top: 0; height: 100vh;
+    overflow-y: auto;
+  }
+  aside .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 700; color: var(--title);
+    margin-bottom: 8px;
+  }
+  aside .brand .dot { color: var(--accent); }
+  aside .ver { color: var(--mute); font-size: 12px; margin-bottom: 28px; }
+  aside nav a {
+    display: block; padding: 6px 10px; border-radius: 6px;
+    color: var(--mute); text-decoration: none; font-size: 13.5px;
+    margin: 1px 0;
+  }
+  aside nav a:hover { color: var(--text); background: var(--bg-3); }
+  aside nav a.section { color: var(--accent-hi); font-weight: 600; margin-top: 16px; padding-left: 6px; }
+  aside .footer { color: var(--faint); font-size: 11.5px; margin-top: 32px; }
+
+  main { padding: 56px 64px 120px; max-width: 920px; }
+  h1 { font-size: 34px; color: var(--title); margin: 0 0 8px; letter-spacing: -0.01em; }
+  h1 .accent { color: var(--accent); }
+  h2 {
+    font-size: 22px; color: var(--title); margin: 56px 0 14px;
+    border-bottom: 1px solid var(--border); padding-bottom: 10px;
+    letter-spacing: -0.005em;
+  }
+  h3 { font-size: 16.5px; color: var(--accent-hi); margin: 28px 0 8px; }
+  h4 { font-size: 14px; color: var(--text); margin: 18px 0 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); }
+  a:hover { color: var(--accent-hi); border-bottom-style: solid; }
+  ul, ol { padding-left: 22px; }
+  li { margin: 4px 0; }
+
+  .lede { color: var(--mute); font-size: 16px; margin: 0 0 22px; max-width: 64ch; }
+
+  /* Code */
+  code, kbd, pre, .mono { font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace; }
+  code { color: var(--accent-hi); background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: 13px; }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text);
+    margin: 14px 0 22px;
+  }
+  pre .c { color: var(--faint); }              /* comment */
+  pre .k { color: var(--accent); }             /* keyword */
+  pre .v { color: var(--info); }               /* variable */
+  pre .s { color: var(--ok); }                 /* string */
+  pre .p { color: var(--mute); }               /* punctuation */
+  pre .o { color: var(--warn); }               /* operator/output */
+  pre .acc { color: var(--accent-hi); font-weight: 600; }
+
+  /* Card box (rounded — matches TUI) */
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-2);
+    padding: 18px 20px;
+    margin: 14px 0 22px;
+  }
+  .card .title { color: var(--accent-hi); font-weight: 600; font-size: 13.5px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 6px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+
+  /* Callouts */
+  .note, .warn, .danger {
+    border-left: 3px solid; padding: 12px 16px; border-radius: 6px;
+    background: var(--bg-2); margin: 14px 0 22px;
+  }
+  .note   { border-color: var(--info);   }
+  .warn   { border-color: var(--warn);   }
+  .danger { border-color: var(--danger); }
+  .note .lbl, .warn .lbl, .danger .lbl { font-weight: 700; letter-spacing: 0.05em; font-size: 12px; }
+  .note .lbl   { color: var(--info);   }
+  .warn .lbl   { color: var(--warn);   }
+  .danger .lbl { color: var(--danger); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 22px; font-size: 13.5px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--accent-hi); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+  td.mono { color: var(--text); }
+
+  /* Module strip */
+  .mod {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-2);
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .mod .h {
+    display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px;
+  }
+  .mod .num { color: var(--accent); font-weight: 700; font-size: 14px; }
+  .mod .name { color: var(--title); font-weight: 600; }
+  .mod .slash { color: var(--mute); font-size: 13px; font-family: "JetBrains Mono", monospace; }
+  .mod .desc { color: var(--text); font-size: 14px; }
+  .mod ul.acts { margin: 8px 0 0 4px; padding-left: 20px; color: var(--mute); font-size: 13.5px; }
+  .mod ul.acts li::marker { color: var(--accent); }
+
+  /* Pill */
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; letter-spacing: 0.04em;
+    background: var(--bg-3); color: var(--mute); border: 1px solid var(--border);
+  }
+  .pill.ok    { color: var(--ok);     border-color: rgba(137,196,137,0.25); }
+  .pill.warn  { color: var(--warn);   border-color: rgba(230,188,117,0.25); }
+  .pill.dang  { color: var(--danger); border-color: rgba(224,108,117,0.25); }
+  .pill.info  { color: var(--info);   border-color: rgba(97,175,239,0.25);  }
+
+  hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
+
+  /* Term list */
+  dl { display: grid; grid-template-columns: 180px 1fr; gap: 6px 18px; }
+  dt { color: var(--accent-hi); font-family: "JetBrains Mono", monospace; font-size: 13px; }
+  dd { margin: 0; color: var(--text); font-size: 14px; }
+
+  /* Header */
+  .hero {
+    display: flex; align-items: center; gap: 14px;
+    padding-bottom: 8px;
+  }
+  .hero .diamond { color: var(--accent); font-size: 22px; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: relative; height: auto; }
+    main  { padding: 32px 22px 80px; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    dl { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+<aside>
+  <div class="brand"><span class="dot">◆</span> ThreatHunter</div>
+  <div class="ver">user guide · v1.0</div>
+  <nav>
+    <a class="section">Getting started</a>
+    <a href="#overview">Overview</a>
+    <a href="#requirements">Requirements</a>
+    <a href="#install">Install &amp; first run</a>
+    <a href="#parameters">Launch parameters</a>
+
+    <a class="section">Using the TUI</a>
+    <a href="#interface">Interface basics</a>
+    <a href="#slash">Slash commands</a>
+    <a href="#timeranges">Time ranges</a>
+    <a href="#results">Working with results</a>
+
+    <a class="section">Modules</a>
+    <a href="#m-events">Event Viewer</a>
+    <a href="#m-search">Event Search</a>
+    <a href="#m-procs">Process Monitor</a>
+    <a href="#m-hunt">Process Hunting</a>
+    <a href="#m-net">Network</a>
+    <a href="#m-persist">Persistence</a>
+    <a href="#m-forensics">Forensic Artefacts</a>
+    <a href="#m-auth">Users &amp; Logons</a>
+    <a href="#m-files">Files &amp; IOC</a>
+    <a href="#m-cmd">Run cmd</a>
+    <a href="#m-ps">Run PowerShell</a>
+
+    <a class="section">Operations</a>
+    <a href="#workflows">Hunting workflows</a>
+    <a href="#output">Output &amp; evidence</a>
+    <a href="#iocs">IOC CSV format</a>
+    <a href="#safety">Safety &amp; destructive ops</a>
+    <a href="#findings">Findings &amp; reports</a>
+
+    <a class="section">Reference</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+    <a href="#cheatsheet">Cheatsheet</a>
+
+    <div class="footer">UK English · self-contained · no external dependencies</div>
+  </nav>
+</aside>
+
+<main>
+  <div class="hero"><span class="diamond">◆</span><h1>ThreatHunter <span class="accent">user guide</span></h1></div>
+  <p class="lede">A standalone PowerShell TUI for incident responders and threat hunters working on Windows endpoints. Zero installations, zero modules — just one <code>.ps1</code> file. This guide walks you through every module, how the interface works, and the workflows it was designed for.</p>
+
+  <!-- ============================ OVERVIEW ============================ -->
+  <h2 id="overview">Overview</h2>
+  <p>ThreatHunter is a single-file PowerShell script that wraps a curated set of triage and hunting actions behind a consistent, chat-style terminal interface. It works equally well on a freshly-acquired endpoint, on a workstation you suspect is compromised, or as a teaching aid for analysts learning Windows internals.</p>
+
+  <div class="grid-3">
+    <div class="card">
+      <div class="title">Standalone</div>
+      <p>One <code>.ps1</code> file. Compatible with Windows PowerShell 5.1 and PowerShell 7+. No installations, no modules, no internet access required.</p>
+    </div>
+    <div class="card">
+      <div class="title">Curated</div>
+      <p>Eleven modules covering events, processes, network, persistence, forensic artefacts, authentication, files and IOC matching — plus arbitrary cmd / PowerShell execution.</p>
+    </div>
+    <div class="card">
+      <div class="title">Evidence-aware</div>
+      <p>Every action is auto-logged. Each result view offers CSV/JSON export and one-key flagging as a finding for the final consolidated report.</p>
+    </div>
+  </div>
+
+  <!-- ============================ REQUIREMENTS ============================ -->
+  <h2 id="requirements">Requirements</h2>
+  <ul>
+    <li>Windows 10, Windows 11 or any modern Windows Server.</li>
+    <li>Windows PowerShell 5.1 (built-in) <em>or</em> PowerShell 7+. The script auto-detects the version.</li>
+    <li>Optional but recommended: run elevated (as Administrator) so the Security log and all processes are visible.</li>
+    <li>No external modules. No internet. No telemetry.</li>
+  </ul>
+
+  <div class="note">
+    <span class="lbl">Note</span> &nbsp; The script will run without admin rights, but it warns you on the banner. Some modules (Security event log, full process inventory, ETW-style channels) are partially or fully invisible to a non-elevated user, and the TUI will tell you when that affects a result.
+  </div>
+
+  <!-- ============================ INSTALL ============================ -->
+  <h2 id="install">Install &amp; first run</h2>
+  <p>There is nothing to install. Drop the file into any folder you can write to:</p>
+<pre><span class="c"># Option A — from your usual prompt</span>
+<span class="k">cd</span> C:\Tools\ThreatHunter
+.\ThreatHunter.ps1
+
+<span class="c"># Option B — bypass execution policy for a single invocation</span>
+<span class="k">powershell.exe</span> -ExecutionPolicy Bypass -File .\ThreatHunter.ps1
+
+<span class="c"># Option C — recommended on a target endpoint (PS 7 + Windows Terminal)</span>
+<span class="k">pwsh</span> -NoProfile -File .\ThreatHunter.ps1</pre>
+
+  <div class="warn">
+    <span class="lbl">Execution policy</span> &nbsp; If you see <code>script is not digitally signed</code>, either set <code>Set-ExecutionPolicy -Scope Process Bypass</code> in the current session, or invoke with <code>-ExecutionPolicy Bypass</code> as shown above. Both are session-only and do not persist.
+  </div>
+
+  <p>On first launch the script:</p>
+  <ol>
+    <li>Detects whether the current session is elevated and shows <span class="pill ok">ADMIN</span> or <span class="pill warn">USER</span> on the banner.</li>
+    <li>Detects ANSI / true-colour support and falls back to console colours when needed (so it looks correct in Windows Terminal, VS Code, ConEmu and the legacy <code>conhost.exe</code> alike).</li>
+    <li>Creates an output folder named with the session timestamp — see <a href="#output">Output &amp; evidence</a>.</li>
+  </ol>
+
+  <!-- ============================ PARAMS ============================ -->
+  <h2 id="parameters">Launch parameters</h2>
+  <dl>
+    <dt>-OutputRoot</dt>
+    <dd>Root directory where session folders are created. Defaults to <code>.\ThreatHunt_Output\</code>, alongside the script.</dd>
+    <dt>-IocFile</dt>
+    <dd>Path to a CSV of indicators (see <a href="#iocs">IOC CSV format</a>). Loaded on demand, can also be set from inside the Files &amp; IOC module.</dd>
+    <dt>-NoLog</dt>
+    <dd>Disables session logging entirely. Disables exports and the final report — use only for read-only sniff tests.</dd>
+    <dt>-NoColor</dt>
+    <dd>Forces monochrome output. Useful in restricted terminals and SSH sessions that mangle escape codes.</dd>
+  </dl>
+
+<pre><span class="c"># Examples</span>
+.\ThreatHunter.ps1
+.\ThreatHunter.ps1 -IocFile .\iocs.sample.csv
+.\ThreatHunter.ps1 -OutputRoot D:\IR\Cases\2026-Q2 -IocFile D:\IR\iocs.csv
+.\ThreatHunter.ps1 -NoColor -NoLog</pre>
+
+  <!-- ============================ INTERFACE ============================ -->
+  <h2 id="interface">Interface basics</h2>
+  <p>The TUI is intentionally simple. Every screen looks the same:</p>
+
+<pre><span class="acc">  ◆ ThreatHunter v1.0.0  ·  TYPHON  ·  brukusec  ·  ADMIN  ·  PS 7.4.6  ·  session 20260507_142133</span>
+
+╭─ main menu  ·  findings: 0 ────────────────────────────────────────────────╮
+│   1  Event Viewer (browse &amp; quick views)                /events           │
+│   2  Event Search (filter by channel/ID/level/keyword)  /search           │
+│   3  Process Monitor                                    /procs            │
+│   4  Process Hunting (advanced)                         /hunt             │
+│   5  Network state                                      /net              │
+│   6  Persistence                                        /persist          │
+│   7  Forensic artefacts                                 /forensics        │
+│   8  Users / Logons / Authentication                    /auth             │
+│   9  Files &amp; IOC                                        /files            │
+│  10  Run CMD command                                    /cmd              │
+│  11  Run PowerShell command / script                    /ps               │
+│  12  Show findings                                      /findings         │
+│  13  Save report now                                    /report           │
+│  14  About / Help                                       /help             │
+╰────────────────────────────────────────────────────────────────────────────╯
+  0) exit   ·   /q to quit   ·   try /events  /procs  /net  /files
+
+<span class="k">›</span> _</pre>
+
+  <p>You navigate by typing one of three things at the <code>›</code> prompt:</p>
+  <ul>
+    <li>A <strong>number</strong> from the menu, e.g. <code>3</code> for Process Monitor, <code>0</code> to go back / exit.</li>
+    <li>A <strong>slash command</strong>, e.g. <code>/procs</code> jumps directly to Process Monitor from any main menu, <code>/q</code> exits.</li>
+    <li><strong>Free text</strong> when a module asks for it — a regex, a path, a time range, a PowerShell expression, etc.</li>
+  </ul>
+
+  <div class="note"><span class="lbl">Tip</span> &nbsp; The menu shows the slash command for each item next to its number, so you do not need to memorise them.</div>
+
+  <h3 id="slash">Slash commands</h3>
+  <p>Slash commands let you skip menu navigation. They work from the main menu prompt; from inside a module, an empty input or <code>0</code> takes you back one level.</p>
+
+  <table>
+    <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">/events</td><td>Open the Event Viewer (channels and quick views).</td></tr>
+      <tr><td class="mono">/search</td><td>Open Event Search (filter by channel, ID, level, keyword, time).</td></tr>
+      <tr><td class="mono">/procs</td><td>Open the Process Monitor.</td></tr>
+      <tr><td class="mono">/hunt</td><td>Advanced process hunting (unsigned binaries, anomalous paths, suspicious chains).</td></tr>
+      <tr><td class="mono">/net</td><td>Network state (TCP/UDP, listening, DNS cache, ARP, firewall, SMB).</td></tr>
+      <tr><td class="mono">/persist</td><td>Persistence mechanisms (tasks, services, run keys, WMI, Winlogon, drivers).</td></tr>
+      <tr><td class="mono">/forensics</td><td>Forensic artefacts (Prefetch, Amcache, ShimCache, BAM, UserAssist, MUICache).</td></tr>
+      <tr><td class="mono">/auth</td><td>Users, logons, authentication (4624/4625/4672/4740/4648, RDP sessions).</td></tr>
+      <tr><td class="mono">/files</td><td>Files &amp; IOC (hashes, recent files, IOC matching, Sysmon parser).</td></tr>
+      <tr><td class="mono">/cmd</td><td>Run an arbitrary <code>cmd.exe</code> command (with destructive-pattern check).</td></tr>
+      <tr><td class="mono">/ps</td><td>Run an arbitrary PowerShell expression or script (with destructive-pattern check).</td></tr>
+      <tr><td class="mono">/findings</td><td>Show every flagged finding for the current session.</td></tr>
+      <tr><td class="mono">/report</td><td>Save the consolidated Markdown report immediately.</td></tr>
+      <tr><td class="mono">/help, /about</td><td>About the tool, list of slash commands, tips.</td></tr>
+      <tr><td class="mono">/q, /quit, /exit</td><td>Exit (offers to save the report first).</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="timeranges">Time ranges</h3>
+  <p>Whenever a module asks for a time range, you can type any of:</p>
+  <dl>
+    <dt>1h, 6h, 24h</dt><dd>Last <em>N</em> hours.</dd>
+    <dt>7d, 30d, 90d</dt><dd>Last <em>N</em> days.</dd>
+    <dt>2w, 6w</dt><dd>Last <em>N</em> weeks.</dd>
+    <dt>3m, 12m</dt><dd>Last <em>N</em> calendar months.</dd>
+    <dt>all</dt><dd>From the Unix epoch to now (large logs may take a while).</dd>
+    <dt>2026-04-15..2026-05-07</dt><dd>An explicit, inclusive date range.</dd>
+  </dl>
+
+  <h3 id="results">Working with results</h3>
+  <p>Every result view ends with a small action prompt:</p>
+<pre>  Actions: <span class="acc">(e)xport  (f)lag finding  (v)iew all  (Enter) continue</span></pre>
+  <ul>
+    <li><strong>e</strong> — export the current dataset to CSV, JSON, or both. Files are saved into <code>exports/</code> in the session folder, prefixed with a timestamp.</li>
+    <li><strong>f</strong> — flag the current view as a finding. You will be asked for a severity (<code>info / low / med / high / critical</code>), a one-line title and a one-line detail. Findings appear in the final report and are also written to the session log.</li>
+    <li><strong>v</strong> — re-render the full unpaginated table (the default view caps at the top 50–200 rows depending on module).</li>
+    <li><strong>Enter</strong> — return to the previous menu without exporting or flagging.</li>
+  </ul>
+
+  <hr />
+
+  <!-- ============================ MODULES ============================ -->
+  <h2 id="modules">Modules</h2>
+  <p>Each module is a standalone screen. You enter it via its number or its slash command, and exit with <code>0</code>.</p>
+
+  <!-- 1 -->
+  <div class="mod" id="m-events">
+    <div class="h"><span class="num">1</span><span class="name">Event Viewer</span><span class="slash">/events</span></div>
+    <div class="desc">Browse the local event log channels and run pre-canned quick views over the most useful ones.</div>
+    <h4>What you can do</h4>
+    <ul class="acts">
+      <li>List every channel with a non-zero record count, sorted by size.</li>
+      <li>Quick view: <em>System</em>, <em>Application</em>, <em>Security</em> (admin), <em>Setup</em>, <em>PowerShell Operational</em>, <em>Windows Defender Operational</em>, <em>Sysmon</em> (if installed), <em>TaskScheduler Operational</em>, <em>WMI-Activity Operational</em>.</li>
+      <li>Each quick view asks how many events to retrieve (default 50) and renders them with timestamp, level, ID, provider and a trimmed message.</li>
+    </ul>
+    <h4>Tips</h4>
+    <ul class="acts">
+      <li>Use <em>List channels</em> first when working on an unfamiliar host — it surfaces sub-channels you might have forgotten about (RDP, Printer, AppLocker, AAD, etc.).</li>
+      <li>If you want a custom filter (specific ID, keyword, time-bound), use <a href="#m-search">Event Search</a> instead.</li>
+    </ul>
+  </div>
+
+  <!-- 2 -->
+  <div class="mod" id="m-search">
+    <div class="h"><span class="num">2</span><span class="name">Event Search</span><span class="slash">/search</span></div>
+    <div class="desc">A guided <code>Get-WinEvent -FilterHashtable</code> wrapper. Builds the filter from interactive prompts and applies an optional message keyword regex on top.</div>
+    <h4>Inputs</h4>
+    <ul class="acts">
+      <li><strong>Channel</strong> — e.g. <code>Security</code>, <code>System</code>, <code>Microsoft-Windows-Sysmon/Operational</code>.</li>
+      <li><strong>Event IDs</strong> — comma-separated. Blank means any.</li>
+      <li><strong>Level</strong> — <code>1</code> Critical, <code>2</code> Error, <code>3</code> Warning, <code>4</code> Information, <code>5</code> Verbose. Blank means any.</li>
+      <li><strong>Keyword</strong> — regex applied against the rendered message text.</li>
+      <li><strong>Time range</strong> — see <a href="#timeranges">syntax</a>.</li>
+    </ul>
+    <h4>Tips</h4>
+    <ul class="acts">
+      <li>For lateral movement triage: channel <code>Security</code>, IDs <code>4624,4648,4672</code>, last 24h.</li>
+      <li>For PowerShell abuse: channel <code>Microsoft-Windows-PowerShell/Operational</code>, ID <code>4104</code>, keyword <code>(IEX|Invoke-Expression|DownloadString)</code>.</li>
+      <li>For service installation: channel <code>System</code>, ID <code>7045</code>, last 7d.</li>
+    </ul>
+  </div>
+
+  <!-- 3 -->
+  <div class="mod" id="m-procs">
+    <div class="h"><span class="num">3</span><span class="name">Process Monitor</span><span class="slash">/procs</span></div>
+    <div class="desc">Live snapshots and views of currently running processes, enriched with parent PID, signing status, owner and command line.</div>
+    <h4>Views</h4>
+    <ul class="acts">
+      <li>Full process table.</li>
+      <li>Parent / child <em>tree</em>, with inline tags for invalid signatures and suspicious paths.</li>
+      <li>Top <em>N</em> by CPU / by working-set memory.</li>
+      <li>Search by name, path or command-line regex.</li>
+      <li>List the loaded DLLs / modules of any single PID.</li>
+      <li>Refresh-loop view (3-second cadence, Ctrl+C to stop).</li>
+    </ul>
+  </div>
+
+  <!-- 4 -->
+  <div class="mod" id="m-hunt">
+    <div class="h"><span class="num">4</span><span class="name">Process Hunting (advanced)</span><span class="slash">/hunt</span></div>
+    <div class="desc">Pre-built queries that surface processes worth a closer look.</div>
+    <h4>Queries</h4>
+    <ul class="acts">
+      <li><strong>Unsigned / invalid-signature</strong> binaries currently running.</li>
+      <li>Processes living in <strong>Temp / AppData / ProgramData / Public</strong> or <strong>Windows\Temp</strong>.</li>
+      <li>Processes with <strong>empty or suspiciously short</strong> command lines.</li>
+      <li>Processes whose parent is a typical <strong>LOLBin / interpreter</strong> (cmd, wscript, mshta, rundll32, regsvr32, powershell, wmic, certutil, bitsadmin) — surfaces phishing and post-exploitation chains.</li>
+      <li>Processes grouped by <strong>uncommon owners</strong>.</li>
+      <li>Network-active processes — joins TCP connections to the process inventory and shows local/remote endpoints.</li>
+    </ul>
+  </div>
+
+  <!-- 5 -->
+  <div class="mod" id="m-net">
+    <div class="h"><span class="num">5</span><span class="name">Network state</span><span class="slash">/net</span></div>
+    <div class="desc">A focused look at every network surface a defender typically wants to see.</div>
+    <ul class="acts">
+      <li>TCP <em>Established</em> connections joined to PID + process name + path.</li>
+      <li>TCP <em>all states</em> view.</li>
+      <li>TCP <em>listening</em> (binds), and UDP <em>listening</em>.</li>
+      <li>DNS client cache.</li>
+      <li>ARP / Neighbor table.</li>
+      <li>Routing table.</li>
+      <li>Network adapters with IPv4/IPv6 addresses.</li>
+      <li>Firewall profile state (Domain / Private / Public, default actions, logging).</li>
+      <li>SMB shares + active SMB sessions.</li>
+    </ul>
+  </div>
+
+  <!-- 6 -->
+  <div class="mod" id="m-persist">
+    <div class="h"><span class="num">6</span><span class="name">Persistence</span><span class="slash">/persist</span></div>
+    <div class="desc">Enumerates the most commonly abused persistence mechanisms.</div>
+    <ul class="acts">
+      <li>Scheduled tasks — full list and a <em>non-Microsoft</em> filtered view.</li>
+      <li>Services — full list and an <em>auto-start non-Microsoft</em> filtered view.</li>
+      <li>Run / RunOnce keys (HKLM, HKCU, including WOW6432Node).</li>
+      <li>Image File Execution Options — surfaces classic debugger hijacks (e.g. sticky-keys, magnifier).</li>
+      <li>WMI permanent event subscriptions (<code>__EventFilter</code>, <code>CommandLineEventConsumer</code>, <code>__FilterToConsumerBinding</code>).</li>
+      <li>Startup folders for All Users and the current user.</li>
+      <li><code>AppInit_DLLs</code> and the related <code>LoadAppInit_DLLs</code> / <code>RequireSignedAppInit_DLLs</code> values.</li>
+      <li>Winlogon — <code>Userinit</code>, <code>Shell</code>, <code>Taskman</code>, <code>AutoAdminLogon</code>, <code>DefaultUserName</code>.</li>
+      <li>Non-Microsoft drivers.</li>
+      <li>PowerShell profiles on disk (machine and user, both Windows PowerShell and PowerShell 7 paths).</li>
+    </ul>
+  </div>
+
+  <!-- 7 -->
+  <div class="mod" id="m-forensics">
+    <div class="h"><span class="num">7</span><span class="name">Forensic artefacts</span><span class="slash">/forensics</span></div>
+    <div class="desc">Read-only inspections of artefacts that record historical execution.</div>
+    <ul class="acts">
+      <li><strong>Prefetch</strong> — <code>%WINDIR%\Prefetch\*.pf</code> sorted by last-write time.</li>
+      <li><strong>Amcache</strong> — registry-mounted <code>InventoryApplicationFile</code> entries with binary path, hash, publisher and version.</li>
+      <li><strong>ShimCache</strong> — value size only (a full parse needs a dedicated tool such as Eric Zimmerman&apos;s <em>AppCompatCacheParser</em>).</li>
+      <li><strong>BAM / DAM</strong> — Background Activity Moderator entries by SID.</li>
+      <li><strong>RecentApps</strong> — Explorer&apos;s record of recent app launches with timestamp and launch count.</li>
+      <li><strong>UserAssist</strong> — automatically ROT13-decoded entries.</li>
+      <li><strong>MUICache</strong> — friendly names of executables ever launched.</li>
+    </ul>
+    <div class="note">
+      <span class="lbl">Note</span> &nbsp; These are best-effort read-outs of the live registry and filesystem. For chain-of-custody work, image the disk and parse the artefacts offline with dedicated tooling.
+    </div>
+  </div>
+
+  <!-- 8 -->
+  <div class="mod" id="m-auth">
+    <div class="h"><span class="num">8</span><span class="name">Users / Logons / Authentication</span><span class="slash">/auth</span></div>
+    <div class="desc">Local account state plus targeted Security-log queries.</div>
+    <ul class="acts">
+      <li>Local users and password ages.</li>
+      <li>Local groups + members.</li>
+      <li>Privileged group membership (Administrators, Backup Operators, Remote Desktop Users, Remote Management Users, Hyper-V Administrators, Power Users, Distributed COM Users).</li>
+      <li>Currently logged-on sessions (via <code>quser</code> with a CIM fallback).</li>
+      <li>Successful logons — <strong>4624</strong>.</li>
+      <li>Failed logons — <strong>4625</strong>.</li>
+      <li>Privileged logons — <strong>4672</strong>.</li>
+      <li>Account lockouts — <strong>4740</strong>.</li>
+      <li>Explicit credential use — <strong>4648</strong>.</li>
+      <li>Account life-cycle events — <strong>4720, 4722, 4723, 4724, 4725, 4726, 4738</strong>.</li>
+      <li>RDP session history from <em>TerminalServices-LocalSessionManager/Operational</em>.</li>
+    </ul>
+  </div>
+
+  <!-- 9 -->
+  <div class="mod" id="m-files">
+    <div class="h"><span class="num">9</span><span class="name">Files &amp; IOC</span><span class="slash">/files</span></div>
+    <div class="desc">Hash files, find recently-modified files, parse Sysmon and match the live host against an indicator list.</div>
+    <ul class="acts">
+      <li>Load or reload the IOC CSV (also accepts an absolute path at runtime).</li>
+      <li>Compute MD5 / SHA1 / SHA256 over a file or a directory (recursive optional). Hash hits against any loaded IOC list are auto-flagged as <span class="pill dang">CRITICAL</span>.</li>
+      <li>Recently created/modified files in the standard suspicious paths (<code>%TEMP%</code>, <code>%WINDIR%\Temp</code>, <code>%APPDATA%</code>, <code>%LOCALAPPDATA%</code>, <code>%PROGRAMDATA%</code>, <code>%PUBLIC%</code>).</li>
+      <li>File search by name pattern in a path (recurse optional).</li>
+      <li>Match running process names/paths against the IOC <code>filename</code> list.</li>
+      <li>Match active TCP remote IPs against the IOC <code>ip</code> list.</li>
+      <li>Match the DNS client cache against the IOC <code>domain</code> list.</li>
+      <li>Sysmon event parser — defaults to IDs <code>1, 3, 7, 11, 22, 25</code>; you can override.</li>
+      <li>Files larger than <em>N</em> MB in user paths (helps spot staged exfil archives).</li>
+    </ul>
+  </div>
+
+  <!-- 10 -->
+  <div class="mod" id="m-cmd">
+    <div class="h"><span class="num">10</span><span class="name">Run cmd command</span><span class="slash">/cmd</span></div>
+    <div class="desc">A simple REPL into <code>cmd.exe /c</code>. Output is captured to the session log automatically.</div>
+    <p>Single-line commands only. Empty input returns to the main menu. The destructive-command detector applies — see <a href="#safety">Safety &amp; destructive ops</a>.</p>
+  </div>
+
+  <!-- 11 -->
+  <div class="mod" id="m-ps">
+    <div class="h"><span class="num">11</span><span class="name">Run PowerShell command / script</span><span class="slash">/ps</span></div>
+    <div class="desc">A REPL that creates a script block from your input and runs it in the current session.</div>
+    <ul class="acts">
+      <li>Type any expression — <code>Get-Date</code>, <code>Get-Process | Sort-Object CPU -desc | Select -First 5</code>, etc.</li>
+      <li>Type <code>SCRIPT</code> to load and execute a <code>.ps1</code> file. Its body is scanned for destructive patterns first.</li>
+      <li>Empty input returns to the main menu.</li>
+      <li>Output is shown on screen and appended to the session log under a <code>=== ps: &lt;cmd&gt; ===</code> block.</li>
+    </ul>
+  </div>
+
+  <hr />
+
+  <!-- ============================ WORKFLOWS ============================ -->
+  <h2 id="workflows">Hunting workflows</h2>
+  <p>Three short walk-throughs to give you a feel for how the modules combine.</p>
+
+  <h3>Workflow A — &ldquo;something feels off, take a quick look&rdquo;</h3>
+  <ol>
+    <li>Launch the script. Confirm <span class="pill ok">ADMIN</span> on the banner.</li>
+    <li><code>/hunt</code> &rarr; <em>Unsigned / invalid-signature binaries running</em>. Skim the list, flag anything obvious as <code>med</code>.</li>
+    <li><code>/hunt</code> &rarr; <em>Processes from Temp/AppData/ProgramData/Public</em>. Same drill.</li>
+    <li><code>/net</code> &rarr; <em>TCP Established with PID</em>. Look for unfamiliar remote IPs or unexpected processes talking to the network.</li>
+    <li><code>/persist</code> &rarr; <em>Scheduled tasks (non-Microsoft)</em> + <em>Run keys</em>.</li>
+    <li><code>/q</code> &rarr; save the report when prompted.</li>
+  </ol>
+
+  <h3>Workflow B — &ldquo;I have IOCs, sweep this host&rdquo;</h3>
+  <ol>
+    <li>Launch with <code>-IocFile</code>: <pre>.\ThreatHunter.ps1 -IocFile .\incident-2026-05.csv</pre></li>
+    <li><code>/files</code> &rarr; <em>Match running processes against IOC list</em>.</li>
+    <li><code>/files</code> &rarr; <em>Match TCP remote IPs against IOC list</em>.</li>
+    <li><code>/files</code> &rarr; <em>Match DNS cache against IOC list</em>.</li>
+    <li><code>/files</code> &rarr; <em>Hash files</em>, point it at <code>%TEMP%</code> and <code>%APPDATA%</code> recursively. Hash matches auto-flag as critical.</li>
+    <li><code>/findings</code> to review, <code>/report</code> to save.</li>
+  </ol>
+
+  <h3>Workflow C — &ldquo;authentication anomaly investigation&rdquo;</h3>
+  <ol>
+    <li><code>/auth</code> &rarr; <em>Failed logons (4625)</em> &mdash; range <code>24h</code>. Spot bursts.</li>
+    <li><code>/auth</code> &rarr; <em>Successful logons (4624)</em> &mdash; same range. Look for <code>LogonType=10</code> (RDP) or <code>=3</code> (network) from unfamiliar source workstations.</li>
+    <li><code>/auth</code> &rarr; <em>Privileged logons (4672)</em>.</li>
+    <li><code>/auth</code> &rarr; <em>Account changes (4720/4722/4723/4724/4725/4726/4738)</em>.</li>
+    <li><code>/auth</code> &rarr; <em>RDP session history</em>.</li>
+    <li>If anything looks off, <code>/search</code> &rarr; channel <code>Security</code>, IDs <code>4624,4625,4672</code>, plus a username keyword to bind it together.</li>
+  </ol>
+
+  <hr />
+
+  <!-- ============================ OUTPUT ============================ -->
+  <h2 id="output">Output &amp; evidence</h2>
+  <p>Every session creates its own folder so you can ship the whole thing as evidence:</p>
+<pre>ThreatHunt_Output\
+└── 20260507_142133\           <span class="c"># YYYYMMDD_HHMMSS — session id</span>
+    ├── session.log            <span class="c"># every action + raw output, append-only</span>
+    ├── exports\
+    │   ├── 142357_evt_search.csv
+    │   ├── 142412_proc_list.json
+    │   └── ...
+    └── report.md              <span class="c"># written on exit, or via /report</span></pre>
+
+  <h3>What goes into <code>session.log</code></h3>
+  <ul>
+    <li>One header line per action with timestamp, category and a short message.</li>
+    <li>For result views, a <code>=== title @ HH:MM:SS ===</code> block followed by the rendered table.</li>
+    <li>Every cmd / PS command executed and its complete output.</li>
+    <li>Every flagged finding, with severity in the category tag (<code>FINDING/HIGH</code>, <code>FINDING/CRITICAL</code>, etc.).</li>
+  </ul>
+
+  <h3>The Markdown report</h3>
+  <p>Written to <code>report.md</code> in the session folder. Contains:</p>
+  <ul>
+    <li>Session metadata (host, user, admin, PowerShell version, start/end time, paths).</li>
+    <li>A table of every flagged finding with severity, module, title and detail.</li>
+    <li>An index of every export.</li>
+    <li>A pointer to the full session log.</li>
+  </ul>
+
+  <!-- ============================ IOCs ============================ -->
+  <h2 id="iocs">IOC CSV format</h2>
+  <p>The Files &amp; IOC module accepts a simple three-column CSV. The header row is required.</p>
+<pre>type,value,description
+sha256,e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855,Empty file placeholder
+md5,d41d8cd98f00b204e9800998ecf8427e,Empty file placeholder
+ip,185.220.101.1,Sample known-bad IP
+domain,malicious-example.com,Sample bad domain
+filename,mimikatz.exe,Credential dumping tool
+filename,rclone.exe,Often abused for exfiltration
+regkey,HKCU:\Software\Classes\ms-settings\shell\open\command,UAC bypass via fodhelper</pre>
+
+  <table>
+    <thead><tr><th>type</th><th>matched against</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">md5 / sha1 / sha256</td><td>Hashes computed by the <em>Hash files</em> view.</td></tr>
+      <tr><td class="mono">ip</td><td>Remote address column of <code>Get-NetTCPConnection</code>.</td></tr>
+      <tr><td class="mono">domain</td><td>Substring match against <code>Entry</code> in the DNS client cache.</td></tr>
+      <tr><td class="mono">filename</td><td>Substring match against the running process Name <em>and</em> Path.</td></tr>
+      <tr><td class="mono">regkey</td><td>Reference value &mdash; not auto-matched but listed in the loaded set for context.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <span class="lbl">Sample file</span> &nbsp; A working <code>iocs.sample.csv</code> ships next to the script. Use it as a template.
+  </div>
+
+  <!-- ============================ SAFETY ============================ -->
+  <h2 id="safety">Safety &amp; destructive ops</h2>
+  <p>The cmd and PowerShell modules screen every input against a list of patterns commonly associated with destructive or evidence-tampering actions. When a match is found, the action is paused and the user must explicitly confirm with <code>y</code>.</p>
+
+  <h4>What is flagged</h4>
+  <ul>
+    <li><code>Remove-Item</code>, <code>rm</code>, <code>rmdir</code>, <code>del</code>, <code>erase</code></li>
+    <li><code>Format-Volume</code>, <code>format X:</code></li>
+    <li><code>Stop-Computer</code>, <code>Restart-Computer</code>, <code>shutdown</code>, <code>logoff</code></li>
+    <li><code>Stop-Process</code>, <code>taskkill</code>, <code>kill</code></li>
+    <li><code>Stop-Service</code>, <code>sc stop</code>, <code>sc delete</code>, <code>Disable-Service</code></li>
+    <li><code>Clear-EventLog</code>, <code>Remove-EventLog</code>, <code>wevtutil cl</code> / <code>clear-log</code></li>
+    <li><code>Disable-NetAdapter</code>, <code>netsh advfirewall reset / set all state off</code></li>
+    <li><code>reg delete</code>, <code>Remove-ItemProperty</code></li>
+    <li><code>Set-ExecutionPolicy ... Unrestricted</code></li>
+    <li><code>Invoke-Expression</code>, <code>iex</code>, <code>DownloadString</code>, <code>DownloadFile</code>, <code>Invoke-WebRequest -OutFile</code></li>
+    <li><code>Add-MpPreference -ExclusionPath</code>, <code>Set-MpPreference -DisableRealtimeMonitoring</code></li>
+    <li><code>cipher /w</code>, <code>sdelete</code></li>
+  </ul>
+
+  <div class="danger">
+    <span class="lbl">Important</span> &nbsp; This is a hint, not a hard block. Confirming with <code>y</code> runs the command as-is. ThreatHunter is intended to be operated by analysts — it will not stop you doing something on purpose, but it will not let you do it by accident.
+  </div>
+
+  <!-- ============================ FINDINGS ============================ -->
+  <h2 id="findings">Findings &amp; reports</h2>
+  <p>Findings are short, structured notes attached to a result you considered relevant.</p>
+  <ul>
+    <li>Press <code>f</code> in any result view, supply severity, title and detail.</li>
+    <li>The full rendered table is captured as the finding&apos;s evidence.</li>
+    <li><code>/findings</code> shows them at any time.</li>
+    <li><code>/report</code> writes the consolidated Markdown report immediately. The same prompt is offered automatically on exit.</li>
+  </ul>
+
+  <h4>Suggested severity scale</h4>
+  <table>
+    <thead><tr><th>Severity</th><th>When to use</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill info">info</span></td><td>Useful context worth keeping but not, by itself, suspicious.</td></tr>
+      <tr><td><span class="pill ok">low</span></td><td>Minor anomaly, possibly explained by environment.</td></tr>
+      <tr><td><span class="pill warn">med</span></td><td>Behaviour worth investigating; would not justify response on its own.</td></tr>
+      <tr><td><span class="pill dang">high</span></td><td>Strong indicator of compromise; warrants escalation.</td></tr>
+      <tr><td><span class="pill dang">critical</span></td><td>Confirmed malicious activity or active hands-on-keyboard signal.</td></tr>
+    </tbody>
+  </table>
+
+  <hr />
+
+  <!-- ============================ TROUBLESHOOTING ============================ -->
+  <h2 id="troubleshooting">Troubleshooting</h2>
+
+  <h4>The banner shows squares or <code>?</code> instead of rounded corners</h4>
+  <p>Your console codepage is not UTF-8. The script ships with a UTF-8 BOM so Windows PowerShell reads the file correctly, but the console itself still needs to render UTF-8. Run <code>chcp 65001</code> before launching, or use Windows Terminal which handles this transparently.</p>
+
+  <h4>Colours show up as raw escape codes (<code>[38;2;…m</code>)</h4>
+  <p>Your console does not support ANSI virtual-terminal sequences. Re-launch with <code>-NoColor</code>, or use Windows Terminal / PS 7 which both support ANSI natively.</p>
+
+  <h4>&ldquo;Get-WinEvent: No events were found&rdquo;</h4>
+  <p>Either the channel does not exist (e.g. Sysmon is not installed) or your time range excludes everything. Try <code>all</code> first to verify the channel has any data, then narrow down.</p>
+
+  <h4>&ldquo;Access is denied&rdquo; on Security log</h4>
+  <p>You are not elevated. Re-launch the prompt as Administrator and try again.</p>
+
+  <h4>The script complains about parser errors after editing</h4>
+  <p>The file must be saved as UTF-8 with BOM. If you opened it in an editor that re-saved it as plain UTF-8 or ANSI, the box-drawing characters will break Windows PowerShell parsing. Check the first three bytes:</p>
+<pre>[System.IO.File]::ReadAllBytes('.\ThreatHunter.ps1')[0..2]
+<span class="o"># Expected: 239 187 191</span></pre>
+
+  <h4>I cannot save exports / report</h4>
+  <p>Ensure the script is in a folder you can write to, or pass <code>-OutputRoot</code> to a writable location. <code>-NoLog</code> also disables exports — only use it intentionally.</p>
+
+  <!-- ============================ CHEATSHEET ============================ -->
+  <h2 id="cheatsheet">Cheatsheet</h2>
+
+  <div class="grid-2">
+    <div class="card">
+      <div class="title">Time ranges</div>
+<pre>1h     6h     24h
+7d     30d    90d
+2w     6w
+3m     12m
+all
+2026-04-15..2026-05-07</pre>
+    </div>
+    <div class="card">
+      <div class="title">Slash commands</div>
+<pre>/events     /search     /procs
+/hunt       /net        /persist
+/forensics  /auth       /files
+/cmd        /ps         /findings
+/report     /help       /q</pre>
+    </div>
+    <div class="card">
+      <div class="title">Result-view actions</div>
+<pre>e   export CSV / JSON / both
+f   flag finding (severity)
+v   view all rows
+␤   continue</pre>
+    </div>
+    <div class="card">
+      <div class="title">Common event IDs</div>
+<pre>Security  4624  successful logon
+Security  4625  failed logon
+Security  4672  privileged logon
+Security  4648  explicit credentials
+Security  4720  user created
+Security  4740  account locked out
+System    7045  service installed
+PS Op.    4104  scriptblock logged
+Sysmon       1  process create
+Sysmon       3  network connect
+Sysmon      11  file create
+Sysmon      22  DNS query</pre>
+    </div>
+  </div>
+
+  <hr />
+  <p style="color: var(--faint); font-size: 12.5px;">© ThreatHunter — single-file standalone TUI. UK English documentation. The script and this guide are distributed together; copy them anywhere you have a Windows endpoint and a PowerShell prompt.</p>
+</main>
+</div>
+</body>
+</html>
