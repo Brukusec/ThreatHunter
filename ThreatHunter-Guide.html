@@ -212,6 +212,7 @@
 
     <a class="section">Operations</a>
     <a href="#workflows">Hunting workflows</a>
+    <a href="#liveresponse">Live Response mode</a>
     <a href="#output">Output &amp; evidence</a>
     <a href="#iocs">IOC CSV format</a>
     <a href="#safety">Safety &amp; destructive ops</a>
@@ -604,6 +605,109 @@
   <hr />
 
   <!-- ============================ OUTPUT ============================ -->
+  
+  <!-- ============================ LIVE RESPONSE ============================ -->
+  <h2 id="liveresponse">Non-interactive / Defender Live Response mode</h2>
+  <p>Every hunting action is also exposed as a parameter switch, so the script runs cleanly inside Microsoft Defender Live Response or any other constrained shell that does not support a TUI. When any action switch is supplied, the script skips the menu, auto-detects redirected output, and emits JSON for piping or a formatted table when run interactively. The full action and its output are still written to <code>session.log</code> for chain-of-custody.</p>
+
+  <h3>Top-level switches</h3>
+  <dl>
+    <dt>-Cmd &lt;s&gt;</dt><dd>Run a <code>cmd.exe</code> one-liner.</dd>
+    <dt>-PS &lt;s&gt;</dt><dd>Run a PowerShell expression.</dd>
+    <dt>-Script &lt;p&gt;</dt><dd>Run a <code>.ps1</code> file (destructive guard scans body first).</dd>
+    <dt>-Procs [-Sub &lt;s&gt;]</dt><dd>list (default), tree, topcpu, topmem, dlls -ProcId N</dd>
+    <dt>-ProcSearch -ProcQuery &lt;re&gt;</dt><dd>Regex against process Name / Path / CommandLine.</dd>
+    <dt>-Hunt -HuntType &lt;k&gt;</dt><dd>unsigned, paths, shortcmd, chain, owners, netactive, all</dd>
+    <dt>-Net [-Sub &lt;s&gt;]</dt><dd>est (default), tcp, listen, udp, dns, arp, route, ip, firewall, smb</dd>
+    <dt>-Persist [-Sub &lt;s&gt;]</dt><dd>all (default), tasks, tasks-susp, services, services-susp, runkeys, ifeo, wmi, startup, appinit, winlogon, drivers, psprofile</dd>
+    <dt>-Forensics [-Sub &lt;s&gt;]</dt><dd>prefetch (default), amcache, shimcache, bam, recentapps, userassist, muicache</dd>
+    <dt>-Auth [-Sub &lt;s&gt; -Range &lt;r&gt;]</dt><dd>priv (default), users, groups, sessions, logons (4624), failed (4625), privlogons (4672), lockouts (4740), explicit (4648), changes (4720&hellip;4738), rdp, pwdage</dd>
+    <dt>-Files [-Sub &lt;s&gt;]</dt><dd>recent (default; -Hours N), large (-Mb N), sysmon (-Range, -Id)</dd>
+    <dt>-EvtChannels</dt><dd>List event log channels with non-zero record count.</dd>
+    <dt>-EvtQuick -Channel &lt;name&gt; [-Count N]</dt><dd>Quick read of any single channel.</dd>
+    <dt>-EvtSearch -Channel ... -Id ... -Range ...</dt><dd>Filtered Get-WinEvent.</dd>
+    <dt>-Hash -Path &lt;p&gt; [-Recurse] [-Algo M]</dt><dd>Hashes file/folder; auto-matches against loaded IOC list.</dd>
+    <dt>-FileSearch -Path -Pattern</dt><dd>Find files by name pattern.</dd>
+    <dt>-IocMatch -IocFile &lt;csv&gt;</dt><dd>Sweep host (procs, tcp, dns) against IOC list.</dd>
+    <dt>-Force</dt><dd>Bypass the destructive-pattern guard.</dd>
+    <dt>-Format Auto|Table|Json|Csv</dt><dd>Default Auto: JSON when stdout is captured, Table when interactive.</dd>
+    <dt>-Quiet</dt><dd>Implied automatically when an action switch is set.</dd>
+    <dt>-Top &lt;n&gt;</dt><dd>Cap rows per result.</dd>
+    <dt>-ListActions</dt><dd>Print every action with example invocations and exit.</dd>
+  </dl>
+
+  <h3>Sub-view examples</h3>
+<pre><span class="c"># Process work</span>
+<span class="k">.\ThreatHunter.ps1</span> -Procs -Sub tree
+<span class="k">.\ThreatHunter.ps1</span> -Procs -Sub topcpu
+<span class="k">.\ThreatHunter.ps1</span> -Procs -Sub dlls -ProcId 1234
+
+<span class="c"># Process hunting</span>
+<span class="k">.\ThreatHunter.ps1</span> -Hunt -HuntType unsigned
+<span class="k">.\ThreatHunter.ps1</span> -Hunt -HuntType chain
+<span class="k">.\ThreatHunter.ps1</span> -Hunt -HuntType all
+
+<span class="c"># Network drill-down</span>
+<span class="k">.\ThreatHunter.ps1</span> -Net -Sub listen
+<span class="k">.\ThreatHunter.ps1</span> -Net -Sub udp
+<span class="k">.\ThreatHunter.ps1</span> -Net -Sub dns
+<span class="k">.\ThreatHunter.ps1</span> -Net -Sub firewall
+
+<span class="c"># Persistence drill-down</span>
+<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub ifeo
+<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub wmi
+<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub winlogon
+<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub psprofile
+
+<span class="c"># Forensic artefacts</span>
+<span class="k">.\ThreatHunter.ps1</span> -Forensics -Sub amcache
+<span class="k">.\ThreatHunter.ps1</span> -Forensics -Sub userassist
+<span class="k">.\ThreatHunter.ps1</span> -Forensics -Sub muicache
+
+<span class="c"># Auth investigation</span>
+<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub failed -Range 24h
+<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub privlogons -Range 7d
+<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub changes -Range 30d
+<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub rdp -Range 7d
+
+<span class="c"># Files</span>
+<span class="k">.\ThreatHunter.ps1</span> -Files -Sub large -Mb 200
+<span class="k">.\ThreatHunter.ps1</span> -Files -Sub sysmon -Range 24h -Id 1,3,11
+
+<span class="c"># Events</span>
+<span class="k">.\ThreatHunter.ps1</span> -EvtChannels
+<span class="k">.\ThreatHunter.ps1</span> -EvtQuick -Channel "Microsoft-Windows-Sysmon/Operational" -Count 200
+
+</pre>
+
+  <h3>Defender Live Response — full recipe</h3>
+<pre><span class="c"># 1. Upload the script + (optional) IOC list once</span>
+PutFile ThreatHunter.ps1
+PutFile iocs.csv
+
+<span class="c"># 2. Run any action on the target host</span>
+run ThreatHunter.ps1 -parameters "-Cmd 'whoami /all'"
+run ThreatHunter.ps1 -parameters "-EvtSearch -Channel Security -Id 4624,4625 -Range 24h"
+run ThreatHunter.ps1 -parameters "-IocMatch -IocFile iocs.csv"
+
+<span class="c"># 3. Pull the session folder back as evidence</span>
+GetFile "ThreatHunt_Output\&lt;session-id&gt;\session.log"
+GetFile "ThreatHunt_Output\&lt;session-id&gt;
+eport.md"</pre>
+
+  <h3>Exit codes</h3>
+  <table>
+    <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+    <tbody>
+      <tr><td><code>0</code></td><td>Action ran successfully (the dataset may still be empty)</td></tr>
+      <tr><td><code>1</code></td><td>Fatal exception during execution</td></tr>
+      <tr><td><code>2</code></td><td>Destructive guard fired or required parameter missing</td></tr>
+      <tr><td><code>3</code></td><td>Underlying cmdlet raised (channel not found, access denied, etc.)</td></tr>
+    </tbody>
+  </table>
+
+  <div class="note"><span class="lbl">Tip</span> &nbsp; The destructive-pattern guard works the same way in non-interactive mode &mdash; it rejects the action with a clean <code>[ERR] ...</code> on stderr and exit code 2. Use <code>-Force</code> only when you know exactly what you are running.</div>
+
   <h2 id="output">Output &amp; evidence</h2>
   <p>Every session creates its own folder so you can ship the whole thing as evidence:</p>
 <pre>ThreatHunt_Output\

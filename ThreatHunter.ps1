@@ -38,10 +38,74 @@
 #>
 [CmdletBinding()]
 param(
+    # -- Common -------------------------------------------------------
     [string]$OutputRoot = (Join-Path -Path $PSScriptRoot -ChildPath 'ThreatHunt_Output'),
     [switch]$NoLog,
     [switch]$NoColor,
-    [string]$IocFile
+    [string]$IocFile,
+
+    # -- Action mode (any of these triggers non-interactive auto-quiet)
+    # Cmd / PS execution
+    [string]$Cmd,           # cmd.exe one-liner   (e.g. -Cmd "whoami")
+    [string]$PS,            # PowerShell expr     (e.g. -PS "Get-Date")
+    [string]$Script,        # path to a .ps1 file
+    [switch]$Force,         # bypass destructive-pattern guard
+
+    # Quick-view actions (each = the module's primary snapshot)
+    [switch]$Procs,
+    [switch]$Net,
+    [switch]$Persist,
+    [switch]$Forensics,
+    [switch]$Auth,
+    [switch]$Files,
+
+    # Event search
+    [switch]$EvtSearch,
+    [string]$Channel = 'System',
+    [int[]] $Id,
+    [int]   $Level,
+    [string]$Keyword,
+    [string]$Range = '24h',
+
+    # Process search
+    [switch]$ProcSearch,
+    [string]$ProcQuery,
+
+    # Hash files / File search
+    [switch]$Hash,
+    [switch]$FileSearch,
+    [string]$Path,
+    [string]$Pattern,
+    [ValidateSet('MD5','SHA1','SHA256')][string]$Algo = 'SHA256',
+    [switch]$Recurse,
+    [int]   $Hours,
+
+    # IOC matching (requires -IocFile)
+    [switch]$IocMatch,
+    [ValidateSet('procs','tcp','dns','all')][string]$IocAgainst = 'all',
+
+    # Sub-view modifier (works with -Net / -Persist / -Forensics / -Auth / -Procs / -Files)
+    [string]$Sub,
+
+    # Process Hunting
+    [switch]$Hunt,
+    [ValidateSet('unsigned','paths','shortcmd','chain','owners','netactive','all')]
+    [string]$HuntType = 'unsigned',
+
+    # Event quick-views
+    [switch]$EvtQuick,         # -EvtQuick -Channel X [-Count N]
+    [switch]$EvtChannels,      # list channels with non-zero count
+    [int]   $Count = 50,
+
+    # Helpers used by sub-views
+    [int]   $ProcId,           # for -Procs -Sub dlls
+    [int]   $Mb = 50,          # for -Files -Sub large
+
+    # Output / verbosity
+    [ValidateSet('Auto','Table','Json','Csv')][string]$Format = 'Auto',
+    [switch]$Quiet,
+    [int]   $Top = 50,
+    [switch]$ListActions
 )
 
 # ---------------------------------------------------------------------------
@@ -1929,11 +1993,922 @@ function Main-Loop {
 }
 
 # ---------------------------------------------------------------------------
+# 13. NON-INTERACTIVE ACTION MODE  (Live Response / scripting)
+# ---------------------------------------------------------------------------
+
+# Detect action mode. Any of these switches/strings triggers non-interactive flow.
+$Script:ActionMode = $false
+if ($Cmd -or $PS -or $Script -or $Procs -or $Net -or $Persist -or $Forensics -or
+    $Auth -or $Files -or $EvtSearch -or $EvtQuick -or $EvtChannels -or $ProcSearch -or
+    $Hash -or $FileSearch -or $IocMatch -or $Hunt -or $ListActions) {
+    $Script:ActionMode = $true
+}
+
+# Resolve effective output format for non-interactive emission.
+function Resolve-Format {
+    if ($Format -ne 'Auto') { return $Format }
+    try { if ([Console]::IsOutputRedirected) { return 'Json' } } catch { }
+    return 'Table'
+}
+
+# Belt-and-braces: silence banners / colours when running in action mode.
+if ($Script:ActionMode) {
+    $Script:TH.NoColor = $true
+    $Script:UseAnsi    = $false
+    if (-not $PSBoundParameters.ContainsKey('Quiet')) { $Quiet = $true }
+}
+$Script:OutFmt = Resolve-Format
+
+# Single emitter used by every Action-* function.
+function Out-Action {
+    param(
+        [Parameter(Mandatory)][AllowNull()]$Data,
+        [string]$BaseName = 'result',
+        [int]$TopN
+    )
+    if (-not $TopN) { $TopN = $Top }
+    if ($null -eq $Data -or ($Data -is [System.Array] -and $Data.Count -eq 0)) {
+        if ($Script:OutFmt -eq 'Json') { '[]' | Write-Output }
+        elseif (-not $Quiet)           { Write-Host '(no data)' }
+        Write-Session -Category 'ACTION' -Message "$BaseName : 0 rows"
+        return
+    }
+    $arr = @($Data)
+    $count = $arr.Count
+    $view  = if ($count -gt $TopN) { $arr | Select-Object -First $TopN } else { $arr }
+    Write-Session -Category 'ACTION' -Message "$BaseName : $count rows (emitting $($view.Count))"
+    Write-SessionBlock -Title $BaseName -Data ($view | Format-Table -AutoSize | Out-String)
+    switch ($Script:OutFmt) {
+        'Json'  { $view | ConvertTo-Json -Depth 6 | Write-Output }
+        'Csv'   { ($view | ConvertTo-Csv -NoTypeInformation) | Write-Output }
+        default { $view | Format-Table -AutoSize -Wrap | Out-Host }
+    }
+}
+
+# Parametric time-range parser (no prompts).
+function Resolve-Range {
+    param([string]$R = '24h')
+    $now = Get-Date
+    if ($R -eq 'all') { return [pscustomobject]@{ Start=[datetime]'1970-01-01'; End=$now } }
+    if ($R -match '^\s*(\d+)\s*([hdwm])\s*$') {
+        $n = [int]$matches[1]; $u = $matches[2].ToLower()
+        $start = switch ($u) {
+            'h' { $now.AddHours(-$n) }
+            'd' { $now.AddDays(-$n) }
+            'w' { $now.AddDays(-$n*7) }
+            'm' { $now.AddMonths(-$n) }
+        }
+        return [pscustomobject]@{ Start=$start; End=$now }
+    }
+    if ($R -match '^\s*(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})\s*$') {
+        $s = [datetime]::ParseExact($matches[1],'yyyy-MM-dd',$null)
+        $e = [datetime]::ParseExact($matches[2],'yyyy-MM-dd',$null).AddDays(1).AddSeconds(-1)
+        return [pscustomobject]@{ Start=$s; End=$e }
+    }
+    return [pscustomobject]@{ Start=$now.AddDays(-1); End=$now }
+}
+
+# ---- Action implementations ----------------------------------------------
+function Action-Fail {
+    param([string]$Message, [int]$Code = 2)
+    try { [Console]::Error.WriteLine("[ERR] $Message") } catch { Write-Error $Message }
+    Write-Session -Category 'ERROR' -Message $Message
+    exit $Code
+}
+
+
+function Action-Cmd {
+    if (-not $Force) {
+        $hit = Test-Destructive $Cmd
+        if ($hit) { Action-Fail "destructive pattern matched: '$hit'. use -Force to bypass." 2 }
+    }
+    Write-Session -Category 'CMD' -Message $Cmd
+    $out  = & cmd.exe /c $Cmd 2>&1
+    $code = $LASTEXITCODE
+    $text = ($out | Out-String).TrimEnd()
+    Write-SessionBlock -Title "cmd: $Cmd" -Data $text
+    if ($Script:OutFmt -eq 'Json') {
+        [pscustomobject]@{ cmd=$Cmd; exitCode=$code; output=$text } | ConvertTo-Json -Depth 4
+    } else {
+        Write-Output $text
+    }
+}
+
+function Action-PS {
+    if (-not $Force) {
+        $hit = Test-Destructive $PS
+        if ($hit) { Action-Fail "destructive pattern matched: '$hit'. use -Force to bypass." 2 }
+    }
+    Write-Session -Category 'PS' -Message $PS
+    $sb  = [scriptblock]::Create($PS)
+    $out = & $sb 2>&1
+    $arr = @($out)
+    Write-SessionBlock -Title "ps: $PS" -Data ($arr | Out-String)
+    if ($Script:OutFmt -eq 'Json') {
+        $clean = $arr | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                [pscustomobject]@{ type='error'; message=$_.Exception.Message }
+            } else { $_ }
+        }
+        $clean | ConvertTo-Json -Depth 6
+    } else {
+        $out | Out-Host
+    }
+}
+
+function Action-Script {
+    if (-not (Test-Path $Script)) { Action-Fail "script not found: $Script" 2 }
+    $body = Get-Content -Raw -Path $Script
+    if (-not $Force) {
+        $hit = Test-Destructive $body
+        if ($hit) { Action-Fail "destructive pattern in script: '$hit'. use -Force to bypass." 2 }
+    }
+    Write-Session -Category 'PS-SCRIPT' -Message $Script
+    $sb   = [scriptblock]::Create($body)
+    $out  = & $sb 2>&1
+    $text = $out | Out-String
+    Write-SessionBlock -Title "ps script: $Script" -Data $text
+    if ($Script:OutFmt -eq 'Json') {
+        [pscustomobject]@{ script=$Script; output=$text.TrimEnd() } | ConvertTo-Json -Depth 4
+    } else {
+        Write-Output $text
+    }
+}
+
+function Action-Procs {
+    $sub = if ($Sub) { $Sub.ToLower() } else { 'list' }
+    switch ($sub) {
+        'list' {
+            $m = Get-ThProcessMap | Select-Object PID, PPID, Name, Owner, SigStatus, Path, CmdLine
+            Out-Action -Data $m -BaseName 'procs_list' -TopN ($Top * 4)
+        }
+        'tree' {
+            # Flat representation of the parent/child tree, with depth + path
+            $m = Get-ThProcessMap
+            $byPid = @{}; foreach ($p in $m) { $byPid[$p.PID] = $p }
+            $children = @{}
+            foreach ($p in $m) {
+                if (-not $children.ContainsKey($p.PPID)) { $children[$p.PPID] = New-Object System.Collections.Generic.List[object] }
+                $children[$p.PPID].Add($p) | Out-Null
+            }
+            $rows = New-Object System.Collections.Generic.List[object]
+            $script:_visit = {
+                param($node, $depth)
+                $tag = ''
+                if ($node.SigStatus -and $node.SigStatus -ne 'Valid') { $tag += "SIG:$($node.SigStatus) " }
+                if ($node.Path -and $node.Path -match '\\(Temp|AppData|ProgramData|Users\\Public)\\') { $tag += 'PATH-SUSP ' }
+                $rows.Add([pscustomobject]@{
+                    Depth=$depth; PID=$node.PID; PPID=$node.PPID; Name=$node.Name
+                    Owner=$node.Owner; SigStatus=$node.SigStatus; Tag=$tag.Trim()
+                    Path=$node.Path; CmdLine=$node.CmdLine
+                }) | Out-Null
+                if ($children.ContainsKey($node.PID)) {
+                    foreach ($ch in ($children[$node.PID] | Sort-Object Name)) {
+                        & $script:_visit $ch ($depth+1)
+                    }
+                }
+            }
+            $roots = $m | Where-Object { -not $byPid.ContainsKey($_.PPID) -or $_.PPID -eq 0 -or $_.PID -eq $_.PPID } | Sort-Object Name
+            foreach ($r in $roots) { & $script:_visit $r 0 }
+            Out-Action -Data $rows.ToArray() -BaseName 'procs_tree' -TopN ($Top * 8)
+        }
+        'topcpu' {
+            $p = Get-Process | Sort-Object CPU -Descending | Select-Object -First ($Top * 2) `
+                Id, ProcessName, CPU, @{n='WS_MB';e={[math]::Round($_.WorkingSet64/1MB,1)}}, Path
+            Out-Action -Data $p -BaseName 'procs_top_cpu' -TopN ($Top * 2)
+        }
+        'topmem' {
+            $p = Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First ($Top * 2) `
+                Id, ProcessName, @{n='WS_MB';e={[math]::Round($_.WorkingSet64/1MB,1)}}, CPU, Path
+            Out-Action -Data $p -BaseName 'procs_top_mem' -TopN ($Top * 2)
+        }
+        'dlls' {
+            if (-not $ProcId) { Action-Fail 'specify -ProcId <pid>' 2 }
+            try {
+                $p = Get-Process -Id $ProcId -ErrorAction Stop
+                $mods = $p.Modules | Select-Object ModuleName, FileName, FileVersion, Company
+                Out-Action -Data $mods -BaseName "procs_dlls_$ProcId" -TopN 500
+            } catch { Action-Fail $_.Exception.Message 3 }
+        }
+        default { Action-Fail "unknown -Sub '$sub'. valid: list,tree,topcpu,topmem,dlls" 2 }
+    }
+}
+
+function Action-Net {
+    $sub = if ($Sub) { $Sub.ToLower() } else { 'est' }
+    $procs = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
+    $byPid = @{}; foreach ($p in $procs) { $byPid[[int]$p.ProcessId] = $p }
+    function _Tcp($state) {
+        $params = @{ ErrorAction = 'SilentlyContinue' }
+        if ($state) { $params['State'] = $state }
+        Get-NetTCPConnection @params | ForEach-Object {
+            $p = $byPid[[int]$_.OwningProcess]
+            [pscustomobject]@{
+                Local   = "$($_.LocalAddress):$($_.LocalPort)"
+                Remote  = "$($_.RemoteAddress):$($_.RemotePort)"
+                State   = $_.State
+                Pid     = $_.OwningProcess
+                Process = if ($p) { $p.Name } else { '?' }
+                Path    = if ($p) { $p.ExecutablePath } else { '' }
+            }
+        }
+    }
+    switch ($sub) {
+        'est'    { Out-Action -Data (_Tcp 'Established') -BaseName 'net_tcp_est'    -TopN ($Top * 4) }
+        'tcp'    { Out-Action -Data (_Tcp $null)         -BaseName 'net_tcp_all'    -TopN ($Top * 4) }
+        'listen' { Out-Action -Data (_Tcp 'Listen')      -BaseName 'net_tcp_listen' -TopN ($Top * 4) }
+        'udp' {
+            try { $u = Get-NetUDPEndpoint -ErrorAction Stop } catch { Action-Fail $_.Exception.Message 3 }
+            $rows = foreach ($c in $u) {
+                $p = $byPid[[int]$c.OwningProcess]
+                [pscustomobject]@{
+                    Local   = "$($c.LocalAddress):$($c.LocalPort)"
+                    Pid     = $c.OwningProcess
+                    Process = if ($p) { $p.Name } else { '?' }
+                    Path    = if ($p) { $p.ExecutablePath } else { '' }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'net_udp_listen' -TopN ($Top * 4)
+        }
+        'dns' {
+            try { $d = Get-DnsClientCache -ErrorAction Stop | Select-Object Entry, RecordType, Status, TimeToLive, Data } catch { $d = @() }
+            Out-Action -Data $d -BaseName 'net_dns' -TopN ($Top * 4)
+        }
+        'arp' {
+            try { $a = Get-NetNeighbor -ErrorAction Stop | Where-Object { $_.State -ne 'Unreachable' } | Select-Object IPAddress, LinkLayerAddress, State, InterfaceAlias } catch { $a = @() }
+            Out-Action -Data $a -BaseName 'net_arp' -TopN ($Top * 4)
+        }
+        'route' {
+            try { $r = Get-NetRoute -ErrorAction Stop | Select-Object DestinationPrefix, NextHop, RouteMetric, InterfaceAlias, AddressFamily } catch { $r = @() }
+            Out-Action -Data $r -BaseName 'net_route' -TopN ($Top * 4)
+        }
+        'ip' {
+            try { $ad = Get-NetIPAddress -ErrorAction Stop | Select-Object InterfaceAlias, AddressFamily, IPAddress, PrefixLength, AddressState } catch { $ad = @() }
+            Out-Action -Data $ad -BaseName 'net_ip' -TopN ($Top * 2)
+        }
+        'firewall' {
+            try { $fw = Get-NetFirewallProfile -ErrorAction Stop | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction, LogAllowed, LogBlocked } catch { $fw = @() }
+            Out-Action -Data $fw -BaseName 'net_firewall' -TopN 10
+        }
+        'smb' {
+            $shares = try { Get-SmbShare -ErrorAction Stop | Select-Object @{n='Type';e={'Share'}}, Name, Path, Description, ShareType } catch { @() }
+            $sess   = try { Get-SmbSession -ErrorAction Stop | Select-Object @{n='Type';e={'Session'}}, ClientComputerName, ClientUserName, NumOpens, SessionId } catch { @() }
+            Out-Action -Data (@($shares) + @($sess)) -BaseName 'net_smb' -TopN ($Top * 2)
+        }
+        default { Action-Fail "unknown -Sub '$sub'. valid: est,tcp,listen,udp,dns,arp,route,ip,firewall,smb" 2 }
+    }
+}
+
+function Action-Persist {
+    $sub = if ($Sub) { $Sub.ToLower() } else { 'all' }
+    function _Tasks($filter) {
+        $t = Get-ScheduledTask -ErrorAction SilentlyContinue
+        if ($filter -eq 'susp') { $t = $t | Where-Object { $_.Author -notmatch 'Microsoft|^$' -and $_.TaskPath -notmatch '^\\Microsoft' } }
+        $t | Select-Object @{n='Type';e={'Task'}}, TaskPath, TaskName, State, Author,
+            @{n='Action';e={ ($_.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | ' }}
+    }
+    function _Services($filter) {
+        $s = Get-CimInstance Win32_Service -ErrorAction SilentlyContinue
+        if ($filter -eq 'susp') { $s = $s | Where-Object { $_.StartMode -eq 'Auto' -and $_.PathName -and $_.PathName -notmatch 'Windows\\(System32|SysWOW64|Microsoft)' } }
+        $s | Select-Object @{n='Type';e={'Service'}}, Name, DisplayName, State, StartMode, StartName, PathName
+    }
+    function _RunKeys {
+        $keys = @(
+            'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run',
+            'HKLM:\Software\Microsoft\Windows\CurrentVersion\RunOnce',
+            'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Run',
+            'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\RunOnce',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run',
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce'
+        )
+        foreach ($k in $keys) {
+            if (Test-Path $k) {
+                $v = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+                if ($v) {
+                    $v.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
+                        [pscustomobject]@{ Type='RunKey'; Hive=$k; Name=$_.Name; Value=$_.Value }
+                    }
+                }
+            }
+        }
+    }
+    switch ($sub) {
+        'all' {
+            $rows = @(_Tasks 'susp') + @(_Services 'susp') + @(_RunKeys)
+            Out-Action -Data $rows -BaseName 'persist_all' -TopN ($Top * 6)
+        }
+        'tasks'         { Out-Action -Data (_Tasks $null)    -BaseName 'persist_tasks'         -TopN ($Top * 8) }
+        'tasks-susp'    { Out-Action -Data (_Tasks 'susp')   -BaseName 'persist_tasks_susp'    -TopN ($Top * 6) }
+        'services'      { Out-Action -Data (_Services $null) -BaseName 'persist_services'      -TopN ($Top * 8) }
+        'services-susp' { Out-Action -Data (_Services 'susp') -BaseName 'persist_services_susp' -TopN ($Top * 4) }
+        'runkeys'       { Out-Action -Data (_RunKeys)        -BaseName 'persist_runkeys'       -TopN 200 }
+        'ifeo' {
+            $base = 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Image File Execution Options'
+            $rows = @()
+            if (Test-Path $base) {
+                $rows = Get-ChildItem $base -ErrorAction SilentlyContinue | ForEach-Object {
+                    $debugger = (Get-ItemProperty -Path $_.PSPath -Name Debugger -ErrorAction SilentlyContinue).Debugger
+                    if ($debugger) { [pscustomobject]@{ Image=$_.PSChildName; Debugger=$debugger } }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'persist_ifeo' -TopN 100
+        }
+        'wmi' {
+            $f  = try { Get-CimInstance -Namespace root\subscription -ClassName __EventFilter -ErrorAction Stop } catch { @() }
+            $cs = try { Get-CimInstance -Namespace root\subscription -ClassName CommandLineEventConsumer -ErrorAction Stop } catch { @() }
+            $b  = try { Get-CimInstance -Namespace root\subscription -ClassName __FilterToConsumerBinding -ErrorAction Stop } catch { @() }
+            $rows = @()
+            foreach ($x in @($f))  { $rows += [pscustomobject]@{ Type='Filter';   Name=$x.Name;   Query=$x.Query } }
+            foreach ($x in @($cs)) { $rows += [pscustomobject]@{ Type='Consumer'; Name=$x.Name;   CommandLineTemplate=$x.CommandLineTemplate } }
+            foreach ($x in @($b))  { $rows += [pscustomobject]@{ Type='Binding';  Filter=$x.Filter; Consumer=$x.Consumer } }
+            Out-Action -Data $rows -BaseName 'persist_wmi' -TopN 100
+        }
+        'startup' {
+            $paths = @(
+                "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\StartUp",
+                "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup"
+            )
+            $rows = foreach ($p in $paths) {
+                if (Test-Path $p) {
+                    Get-ChildItem -Path $p -Force -ErrorAction SilentlyContinue |
+                        Select-Object @{n='Folder';e={$p}}, Name, Length, LastWriteTime, FullName
+                }
+            }
+            Out-Action -Data $rows -BaseName 'persist_startup' -TopN 100
+        }
+        'appinit' {
+            $keys = @(
+                'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Windows',
+                'HKLM:\Software\WOW6432Node\Microsoft\Windows NT\CurrentVersion\Windows'
+            )
+            $rows = foreach ($k in $keys) {
+                if (Test-Path $k) {
+                    $v = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+                    if ($v) {
+                        [pscustomobject]@{
+                            Key=$k; AppInit_DLLs=$v.AppInit_DLLs; LoadAppInit_DLLs=$v.LoadAppInit_DLLs; RequireSigned=$v.RequireSignedAppInit_DLLs
+                        }
+                    }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'persist_appinit' -TopN 10
+        }
+        'winlogon' {
+            $key = 'HKLM:\Software\Microsoft\Windows NT\CurrentVersion\Winlogon'
+            if (Test-Path $key) {
+                $v = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+                $row = [pscustomobject]@{
+                    Userinit=$v.Userinit; Shell=$v.Shell; Taskman=$v.Taskman
+                    AutoAdminLogon=$v.AutoAdminLogon; DefaultUserName=$v.DefaultUserName
+                }
+                Out-Action -Data @($row) -BaseName 'persist_winlogon' -TopN 5
+            } else { Out-Action -Data @() -BaseName 'persist_winlogon' }
+        }
+        'drivers' {
+            $d = Get-CimInstance Win32_SystemDriver -ErrorAction SilentlyContinue |
+                Where-Object { $_.PathName -and $_.PathName -notmatch 'system32\\drivers\\(Microsoft|Windows)' } |
+                Select-Object Name, DisplayName, State, StartMode, PathName
+            Out-Action -Data $d -BaseName 'persist_drivers' -TopN ($Top * 4)
+        }
+        'psprofile' {
+            $profs = @(
+                "$env:WINDIR\System32\WindowsPowerShell\v1.0\profile.ps1",
+                "$env:WINDIR\System32\WindowsPowerShell\v1.0\Microsoft.PowerShell_profile.ps1",
+                (Join-Path $HOME 'Documents\WindowsPowerShell\profile.ps1'),
+                (Join-Path $HOME 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+                (Join-Path $HOME 'Documents\PowerShell\profile.ps1'),
+                (Join-Path $HOME 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1')
+            )
+            $rows = foreach ($p in $profs) {
+                if (Test-Path $p) {
+                    $fi = Get-Item $p
+                    [pscustomobject]@{
+                        Path=$p; Bytes=$fi.Length; Modified=$fi.LastWriteTime
+                        Head=((Get-Content $p -TotalCount 5 -ErrorAction SilentlyContinue) -join ' / ')
+                    }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'persist_psprofile' -TopN 20
+        }
+        default { Action-Fail "unknown -Sub '$sub'. valid: all,tasks,tasks-susp,services,services-susp,runkeys,ifeo,wmi,startup,appinit,winlogon,drivers,psprofile" 2 }
+    }
+}
+
+function Action-Forensics {
+    $sub = if ($Sub) { $Sub.ToLower() } else { 'prefetch' }
+    switch ($sub) {
+        'prefetch' {
+            $pf = "$env:WINDIR\Prefetch"
+            if (-not (Test-Path $pf)) { Out-Action -Data @() -BaseName 'forensic_prefetch'; return }
+            $rows = Get-ChildItem -Path $pf -Filter *.pf -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object Name, LastWriteTime, CreationTime, Length, FullName
+            Out-Action -Data $rows -BaseName 'forensic_prefetch' -TopN ($Top * 4)
+        }
+        'amcache' {
+            $keys = @(
+                'HKLM:\SOFTWARE\Microsoft\Amcache.hve\Root\InventoryApplicationFile',
+                'HKLM:\SOFTWARE\Microsoft\Amcache\Root\InventoryApplicationFile'
+            )
+            $rows = @()
+            foreach ($k in $keys) {
+                if (Test-Path $k) {
+                    $rows += Get-ChildItem $k -ErrorAction SilentlyContinue | ForEach-Object {
+                        $v = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+                        [pscustomobject]@{
+                            Key=$_.PSChildName; Name=$v.Name; Path=$v.LowerCaseLongPath
+                            Hash=$v.FileId; Publisher=$v.Publisher; Version=$v.Version
+                        }
+                    }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'forensic_amcache' -TopN ($Top * 4)
+        }
+        'shimcache' {
+            $k = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatCache'
+            $row = $null
+            if (Test-Path $k) {
+                $v = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+                if ($v.AppCompatCache) {
+                    $row = [pscustomobject]@{
+                        ValueBytes=$v.AppCompatCache.Length
+                        Note='Use AppCompatCacheParser.exe for full content.'
+                    }
+                }
+            }
+            Out-Action -Data @($row | Where-Object { $_ }) -BaseName 'forensic_shimcache' -TopN 1
+        }
+        'bam' {
+            $bases = @(
+                'HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings',
+                'HKLM:\SYSTEM\CurrentControlSet\Services\bam\UserSettings'
+            )
+            $rows = @()
+            foreach ($b in $bases) {
+                if (Test-Path $b) {
+                    Get-ChildItem $b -ErrorAction SilentlyContinue | ForEach-Object {
+                        $sid = $_.PSChildName
+                        $v = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+                        $v.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS|^Version|^SequenceNumber' } | ForEach-Object {
+                            $rows += [pscustomobject]@{ SID=$sid; Path=$_.Name; ValueBytes=([byte[]]$_.Value).Length }
+                        }
+                    }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'forensic_bam' -TopN ($Top * 6)
+        }
+        'recentapps' {
+            $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps'
+            $rows = @()
+            if (Test-Path $k) {
+                $rows = Get-ChildItem $k -ErrorAction SilentlyContinue | ForEach-Object {
+                    $v = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
+                    [pscustomobject]@{
+                        AppId=$v.AppId; AppPath=$v.AppPath
+                        LastAccessed=if ($v.LastAccessedTime) { [datetime]::FromFileTime([int64]$v.LastAccessedTime) } else { $null }
+                        LaunchCount=$v.LaunchCount
+                    }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'forensic_recentapps' -TopN 100
+        }
+        'userassist' {
+            $base = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist'
+            $rows = @()
+            if (Test-Path $base) {
+                Get-ChildItem $base -ErrorAction SilentlyContinue | ForEach-Object {
+                    $countKey = Join-Path $_.PSPath 'Count'
+                    if (Test-Path $countKey) {
+                        $vals = Get-ItemProperty -Path $countKey -ErrorAction SilentlyContinue
+                        $vals.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
+                            $name = $_.Name
+                            $dec = -join ($name.ToCharArray() | ForEach-Object {
+                                $ch = $_
+                                if ($ch -match '[a-z]') { [char](((([int][char]$ch) - 97 + 13) % 26) + 97) }
+                                elseif ($ch -match '[A-Z]') { [char](((([int][char]$ch) - 65 + 13) % 26) + 65) }
+                                else { $ch }
+                            })
+                            $rows += [pscustomobject]@{ Decoded=$dec; ValueBytes=([byte[]]$_.Value).Length }
+                        }
+                    }
+                }
+            }
+            Out-Action -Data $rows -BaseName 'forensic_userassist' -TopN ($Top * 4)
+        }
+        'muicache' {
+            $k = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache'
+            $rows = @()
+            if (Test-Path $k) {
+                $v = Get-ItemProperty -Path $k -ErrorAction SilentlyContinue
+                $rows = $v.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' -and $_.Name -match '\.exe' } |
+                    ForEach-Object { [pscustomobject]@{ Path=$_.Name; Friendly=$_.Value } }
+            }
+            Out-Action -Data $rows -BaseName 'forensic_muicache' -TopN ($Top * 4)
+        }
+        default { Action-Fail "unknown -Sub '$sub'. valid: prefetch,amcache,shimcache,bam,recentapps,userassist,muicache" 2 }
+    }
+}
+
+function Action-Auth {
+    $sub = if ($Sub) { $Sub.ToLower() } else { 'priv' }
+    function _AuthEvents($ids, [string]$base) {
+        $tr = Resolve-Range $Range
+        try {
+            $hash = @{ LogName='Security'; Id=$ids; StartTime=$tr.Start; EndTime=$tr.End }
+            $ev = Get-WinEvent -FilterHashtable $hash -ErrorAction Stop |
+                Select-Object TimeCreated, Id,
+                    @{n='Account';e={ $_.Properties[5].Value }},
+                    @{n='Domain'; e={ $_.Properties[6].Value }},
+                    @{n='Source'; e={ try { $_.Properties[18].Value } catch { '' } }},
+                    @{n='Type';   e={ try { $_.Properties[8].Value }  catch { '' } }},
+                    @{n='Msg';    e={ ([string]$_.Message -replace '\s+',' ') }}
+            Out-Action -Data $ev -BaseName $base -TopN ($Top * 4)
+        } catch { Action-Fail $_.Exception.Message 3 }
+    }
+    switch ($sub) {
+        'users' {
+            $u = try { Get-LocalUser -ErrorAction Stop | Select-Object Name, Enabled, LastLogon, PasswordLastSet, PasswordExpires, PasswordRequired, Description } catch { @() }
+            Out-Action -Data $u -BaseName 'auth_users' -TopN 200
+        }
+        'groups' {
+            try {
+                $g = Get-LocalGroup -ErrorAction Stop
+                $rows = foreach ($grp in $g) {
+                    $members = Get-LocalGroupMember -Group $grp.Name -ErrorAction SilentlyContinue
+                    [pscustomobject]@{
+                        Group=$grp.Name; Count=($members | Measure-Object).Count
+                        Members=($members | ForEach-Object { $_.Name }) -join ', '
+                    }
+                }
+                Out-Action -Data $rows -BaseName 'auth_groups' -TopN 100
+            } catch { Action-Fail $_.Exception.Message 3 }
+        }
+        'priv' {
+            $priv = @('Administrators','Backup Operators','Remote Desktop Users','Remote Management Users','Hyper-V Administrators','Power Users','Distributed COM Users')
+            $rows = foreach ($g in $priv) {
+                try {
+                    $m = Get-LocalGroupMember -Group $g -ErrorAction Stop
+                    foreach ($mb in $m) {
+                        [pscustomobject]@{ Group=$g; Member=$mb.Name; ObjectClass=$mb.ObjectClass; Source=$mb.PrincipalSource }
+                    }
+                } catch { }
+            }
+            Out-Action -Data $rows -BaseName 'auth_priv' -TopN 200
+        }
+        'sessions' {
+            try {
+                $q = quser 2>$null
+                if ($q) {
+                    $rows = $q | Select-Object @{n='Line';e={$_}}
+                    Out-Action -Data $rows -BaseName 'auth_sessions' -TopN 50
+                } else {
+                    $s = Get-CimInstance Win32_LogonSession -ErrorAction SilentlyContinue |
+                        Select-Object LogonId, LogonType, StartTime, AuthenticationPackage
+                    Out-Action -Data $s -BaseName 'auth_sessions_cim' -TopN 50
+                }
+            } catch { Action-Fail $_.Exception.Message 3 }
+        }
+        'logons'      { _AuthEvents @(4624) 'auth_4624' }
+        'failed'      { _AuthEvents @(4625) 'auth_4625' }
+        'privlogons'  { _AuthEvents @(4672) 'auth_4672' }
+        'lockouts'    { _AuthEvents @(4740) 'auth_4740' }
+        'explicit'    { _AuthEvents @(4648) 'auth_4648' }
+        'changes'     { _AuthEvents @(4720,4722,4723,4724,4725,4726,4738) 'auth_acct_changes' }
+        'rdp' {
+            $tr = Resolve-Range $Range
+            try {
+                $ev = Get-WinEvent -FilterHashtable @{ LogName='Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'; StartTime=$tr.Start; EndTime=$tr.End } -ErrorAction Stop |
+                    Where-Object { $_.Id -in 21,22,23,24,25,39,40 } |
+                    Select-Object TimeCreated, Id, @{n='Msg';e={ ([string]$_.Message -replace '\s+',' ') }}
+                Out-Action -Data $ev -BaseName 'auth_rdp' -TopN ($Top * 2)
+            } catch { Action-Fail $_.Exception.Message 3 }
+        }
+        'pwdage' {
+            try {
+                $u = Get-LocalUser -ErrorAction Stop | Select-Object Name, Enabled, LastLogon, PasswordLastSet,
+                    @{n='PwdAgeDays';e={ if ($_.PasswordLastSet) { [int](((Get-Date) - $_.PasswordLastSet).TotalDays) } else { $null } }}
+                Out-Action -Data $u -BaseName 'auth_pwdage' -TopN 100
+            } catch { Action-Fail $_.Exception.Message 3 }
+        }
+        default { Action-Fail "unknown -Sub '$sub'. valid: users,groups,priv,sessions,logons,failed,privlogons,lockouts,explicit,changes,rdp,pwdage" 2 }
+    }
+}
+
+function Action-Files {
+    $sub = if ($Sub) { $Sub.ToLower() } else { 'recent' }
+    switch ($sub) {
+        'recent' {
+            $h = if ($Hours -gt 0) { $Hours } else { 24 }
+            $cut = (Get-Date).AddHours(-$h)
+            $paths = @($env:TEMP, "$env:WINDIR\Temp", $env:APPDATA, $env:LOCALAPPDATA, $env:ProgramData, $env:PUBLIC)
+            $rows = foreach ($p in $paths) {
+                if (Test-Path $p) {
+                    Get-ChildItem -Path $p -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.LastWriteTime -ge $cut } |
+                        Select-Object FullName, Length, LastWriteTime, CreationTime
+                }
+            }
+            Out-Action -Data $rows -BaseName 'files_recent' -TopN ($Top * 4)
+        }
+        'large' {
+            $bytes = [int64]$Mb * 1MB
+            $paths = @($env:USERPROFILE, $env:ProgramData, $env:TEMP)
+            $rows = foreach ($p in $paths) {
+                if (Test-Path $p) {
+                    Get-ChildItem -Path $p -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Length -ge $bytes } |
+                        Select-Object FullName, @{n='SizeMB';e={[math]::Round($_.Length/1MB,1)}}, LastWriteTime
+                }
+            }
+            Out-Action -Data $rows -BaseName 'files_large' -TopN ($Top * 2)
+        }
+        'sysmon' {
+            $tr = Resolve-Range $Range
+            $ids = if ($Id) { $Id } else { @(1,3,7,11,22,25) }
+            try {
+                $ev = Get-WinEvent -FilterHashtable @{ LogName='Microsoft-Windows-Sysmon/Operational'; Id=$ids; StartTime=$tr.Start; EndTime=$tr.End } -ErrorAction Stop |
+                    Select-Object TimeCreated, Id, @{n='Msg';e={ ([string]$_.Message -replace '\s+',' ') }}
+                Out-Action -Data $ev -BaseName 'files_sysmon' -TopN ($Top * 4)
+            } catch { Action-Fail $_.Exception.Message 3 }
+        }
+        default { Action-Fail "unknown -Sub '$sub'. valid: recent,large,sysmon" 2 }
+    }
+}
+
+function Action-EvtSearch {
+    $tr = Resolve-Range $Range
+    $hash = @{ LogName = $Channel; StartTime = $tr.Start; EndTime = $tr.End }
+    if ($Id)    { $hash['Id']    = $Id }
+    if ($Level) { $hash['Level'] = $Level }
+    try {
+        $events = Get-WinEvent -FilterHashtable $hash -ErrorAction Stop
+        if ($Keyword) { $events = $events | Where-Object { $_.Message -match $Keyword } }
+        $rows = $events | Select-Object TimeCreated,
+            @{n='Level';e={$_.LevelDisplayName}}, Id, ProviderName, MachineName,
+            @{n='Message';e={ ([string]$_.Message -replace '\s+',' ') }}
+        Out-Action -Data $rows -BaseName "evt_search_$Channel" -TopN $Top
+    } catch {
+        Action-Fail $_.Exception.Message 3
+    }
+}
+
+function Action-ProcSearch {
+    if (-not $ProcQuery) { Action-Fail "specify -ProcQuery <regex>" 2 }
+    $m = Get-ThProcessMap | Where-Object {
+        ($_.Name    -and $_.Name    -match $ProcQuery) -or
+        ($_.Path    -and $_.Path    -match $ProcQuery) -or
+        ($_.CmdLine -and $_.CmdLine -match $ProcQuery)
+    } | Select-Object PID, PPID, Name, Owner, SigStatus, Path, CmdLine
+    Out-Action -Data $m -BaseName 'proc_search' -TopN $Top
+}
+
+function Action-Hash {
+    if (-not $Path -or -not (Test-Path $Path)) { Action-Fail "specify -Path <file or folder>" 2 }
+    $files = if ((Get-Item $Path).PSIsContainer) {
+        if ($Recurse) { Get-ChildItem -Path $Path -File -Recurse -ErrorAction SilentlyContinue }
+        else          { Get-ChildItem -Path $Path -File -ErrorAction SilentlyContinue }
+    } else { Get-Item $Path }
+    $rows = foreach ($f in $files) {
+        try {
+            $h = Get-FileHash -Path $f.FullName -Algorithm $Algo -ErrorAction Stop
+            [pscustomobject]@{
+                Hash=$h.Hash; Algo=$h.Algorithm; Path=$f.FullName;
+                SizeKB=[math]::Round($f.Length/1KB,1); Modified=$f.LastWriteTime
+            }
+        } catch { }
+    }
+    if ($Script:TH.Iocs.Count -eq 0 -and $Script:TH.IocFile) { $Script:TH.Iocs = Load-IOCs }
+    if ($Script:TH.Iocs.Count -gt 0) {
+        $hashIocs = $Script:TH.Iocs | Where-Object { $_.Type -in @('md5','sha1','sha256') }
+        if ($hashIocs) {
+            $hits = $rows | Where-Object { $hashIocs.Value -contains $_.Hash }
+            foreach ($h in $hits) {
+                Add-Finding -Module 'Action/Hash' -Severity 'critical' -Title 'IOC hash match' -Detail "$($h.Algo) $($h.Hash) :: $($h.Path)" -Evidence $h
+            }
+        }
+    }
+    Out-Action -Data $rows -BaseName 'hashes' -TopN ($Top * 4)
+}
+
+function Action-FileSearch {
+    if (-not $Path)    { Action-Fail "specify -Path <folder>" 2 }
+    if (-not $Pattern) { $Pattern = '*' }
+    $gci = @{ Path=$Path; Filter=$Pattern; File=$true; ErrorAction='SilentlyContinue' }
+    if ($Recurse) { $gci['Recurse'] = $true }
+    $rows = Get-ChildItem @gci | Select-Object FullName, Length, LastWriteTime, CreationTime
+    Out-Action -Data $rows -BaseName 'file_search' -TopN ($Top * 4)
+}
+
+function Action-IocMatch {
+    if ($Script:TH.Iocs.Count -eq 0 -and $Script:TH.IocFile) { $Script:TH.Iocs = Load-IOCs }
+    if ($Script:TH.Iocs.Count -eq 0) { Action-Fail "no IOCs loaded - use -IocFile <path>" 2 }
+    $results = New-Object System.Collections.Generic.List[object]
+    if ($IocAgainst -in @('procs','all')) {
+        $procs = Get-ThProcessMap
+        $names = $Script:TH.Iocs | Where-Object { $_.Type -eq 'filename' } | Select-Object -ExpandProperty Value
+        foreach ($p in $procs) {
+            foreach ($n in $names) {
+                if (($p.Path -and $p.Path -like "*$n*") -or ($p.Name -and $p.Name -like "*$n*")) {
+                    $results.Add([pscustomobject]@{ Match='proc'; IOC=$n; Pid=$p.PID; Name=$p.Name; Path=$p.Path }) | Out-Null
+                    break
+                }
+            }
+        }
+    }
+    if ($IocAgainst -in @('tcp','all')) {
+        try { $conns = Get-NetTCPConnection -ErrorAction Stop } catch { $conns = @() }
+        $ips = $Script:TH.Iocs | Where-Object { $_.Type -eq 'ip' } | Select-Object -ExpandProperty Value
+        foreach ($c in $conns) {
+            if ($ips -contains $c.RemoteAddress) {
+                $results.Add([pscustomobject]@{
+                    Match='tcp'; IOC=$c.RemoteAddress
+                    Local="$($c.LocalAddress):$($c.LocalPort)"
+                    Remote="$($c.RemoteAddress):$($c.RemotePort)"
+                    State=$c.State; Pid=$c.OwningProcess
+                }) | Out-Null
+            }
+        }
+    }
+    if ($IocAgainst -in @('dns','all')) {
+        try { $cache = Get-DnsClientCache -ErrorAction Stop } catch { $cache = @() }
+        $doms = $Script:TH.Iocs | Where-Object { $_.Type -eq 'domain' } | Select-Object -ExpandProperty Value
+        foreach ($e in $cache) {
+            foreach ($d in $doms) {
+                if ($e.Entry -like "*$d*") {
+                    $results.Add([pscustomobject]@{ Match='dns'; IOC=$d; Entry=$e.Entry; Type=$e.RecordType; Data=$e.Data }) | Out-Null
+                    break
+                }
+            }
+        }
+    }
+    foreach ($r in $results) {
+        Add-Finding -Module 'Action/IocMatch' -Severity 'high' -Title "IOC match ($($r.Match))" -Detail "$($r.IOC)" -Evidence $r
+    }
+    Out-Action -Data $results.ToArray() -BaseName "ioc_match_$IocAgainst" -TopN ($Top * 6)
+}
+
+function Action-Hunt {
+    $kind = if ($HuntType) { $HuntType.ToLower() } else { 'unsigned' }
+    $m = Get-ThProcessMap
+    $byPid = @{}; foreach ($p in $m) { $byPid[$p.PID] = $p }
+    function _Unsigned {
+        $m | Where-Object { $_.Path -and $_.SigStatus -and $_.SigStatus -ne 'Valid' } |
+            Select-Object @{n='Type';e={'unsigned'}}, PID, Name, SigStatus, Signer, Path
+    }
+    function _SuspPaths {
+        $m | Where-Object { $_.Path -and $_.Path -match '\\(Temp|AppData|ProgramData|Users\\Public|Windows\\Temp)\\' } |
+            Select-Object @{n='Type';e={'paths'}}, PID, Name, Owner, SigStatus, Path
+    }
+    function _ShortCmd {
+        $m | Where-Object { -not $_.CmdLine -or ($_.CmdLine -and $_.CmdLine.Length -lt 8) } |
+            Select-Object @{n='Type';e={'shortcmd'}}, PID, Name, CmdLine, Path
+    }
+    function _Chain {
+        $sus = 'cmd.exe|wscript.exe|cscript.exe|mshta.exe|rundll32.exe|regsvr32.exe|powershell.exe|pwsh.exe|wmic.exe|certutil.exe|bitsadmin.exe'
+        foreach ($p in $m) {
+            $par = $byPid[$p.PPID]
+            if ($par -and $par.Name -and ($par.Name -match $sus)) {
+                [pscustomobject]@{
+                    Type='chain'
+                    ParentPid=$par.PID; ParentName=$par.Name; ParentCmd=$par.CmdLine
+                    ChildPid=$p.PID;    ChildName=$p.Name;    ChildCmd=$p.CmdLine
+                }
+            }
+        }
+    }
+    function _Owners {
+        $m | Group-Object -Property Owner | Sort-Object Count |
+            Select-Object @{n='Type';e={'owners'}}, Count, Name
+    }
+    function _NetActive {
+        $conns = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue
+        foreach ($c in $conns) {
+            $p = $byPid[[int]$c.OwningProcess]
+            [pscustomobject]@{
+                Type='netactive'; Pid=$c.OwningProcess; Process=if ($p) { $p.Name } else { '?' }
+                Path=if ($p) { $p.Path } else { '' }
+                Local="$($c.LocalAddress):$($c.LocalPort)"; Remote="$($c.RemoteAddress):$($c.RemotePort)"
+                State=$c.State
+            }
+        }
+    }
+    switch ($kind) {
+        'unsigned'  { Out-Action -Data (_Unsigned)  -BaseName 'hunt_unsigned'  -TopN ($Top * 2) }
+        'paths'     { Out-Action -Data (_SuspPaths) -BaseName 'hunt_paths'     -TopN ($Top * 2) }
+        'shortcmd'  { Out-Action -Data (_ShortCmd)  -BaseName 'hunt_shortcmd'  -TopN ($Top * 2) }
+        'chain'     { Out-Action -Data (_Chain)     -BaseName 'hunt_chain'     -TopN ($Top * 2) }
+        'owners'    { Out-Action -Data (_Owners)    -BaseName 'hunt_owners'    -TopN 50 }
+        'netactive' { Out-Action -Data (_NetActive) -BaseName 'hunt_netactive' -TopN ($Top * 2) }
+        'all' {
+            $rows = @()
+            $rows += @(_Unsigned)
+            $rows += @(_SuspPaths)
+            $rows += @(_ShortCmd)
+            $rows += @(_Chain)
+            $rows += @(_NetActive)
+            Out-Action -Data $rows -BaseName 'hunt_all' -TopN ($Top * 6)
+        }
+        default { Action-Fail "unknown -HuntType '$kind'. valid: unsigned,paths,shortcmd,chain,owners,netactive,all" 2 }
+    }
+}
+
+function Action-EvtQuick {
+    if (-not $Channel) { Action-Fail 'specify -Channel <name>' 2 }
+    try {
+        $ev = Get-WinEvent -LogName $Channel -MaxEvents $Count -ErrorAction Stop |
+            Select-Object TimeCreated,
+                @{n='Level';e={$_.LevelDisplayName}},
+                Id, ProviderName,
+                @{n='Message';e={ ([string]$_.Message -replace '\s+',' ') }}
+        Out-Action -Data $ev -BaseName ("evt_quick_" + ($Channel -replace '[\\/]','_')) -TopN $Count
+    } catch { Action-Fail $_.Exception.Message 3 }
+}
+
+function Action-EvtChannels {
+    try {
+        $logs = Get-WinEvent -ListLog * -ErrorAction SilentlyContinue |
+            Where-Object { $_.RecordCount -gt 0 } |
+            Sort-Object -Property RecordCount -Descending |
+            Select-Object LogName, RecordCount, IsEnabled, LogMode, FileSize, LastWriteTime
+        Out-Action -Data $logs -BaseName 'evt_channels' -TopN ($Top * 4)
+    } catch { Action-Fail $_.Exception.Message 3 }
+}
+
+function Action-ListActions {
+    $rows = @(
+        # Top-level
+        [pscustomobject]@{ Module='Cmd/PS';     Switch='-Cmd <s>';                  Description='Run cmd.exe one-liner';                       Example='-Cmd "whoami /all"' }
+        [pscustomobject]@{ Module='Cmd/PS';     Switch='-PS <s>';                   Description='Run PowerShell expression';                   Example='-PS "Get-Process | Where CPU -gt 10"' }
+        [pscustomobject]@{ Module='Cmd/PS';     Switch='-Script <p>';               Description='Run a .ps1 file (with destructive guard)';    Example='-Script .\extra.ps1' }
+        # Procs
+        [pscustomobject]@{ Module='Procs';      Switch='-Procs [-Sub <s>]';         Description='list (default), tree, topcpu, topmem, dlls';  Example='-Procs -Sub tree' }
+        [pscustomobject]@{ Module='Procs';      Switch='-Procs -Sub dlls -ProcId N';Description='List DLLs of a given PID';                    Example='-Procs -Sub dlls -ProcId 1234' }
+        [pscustomobject]@{ Module='Procs';      Switch='-ProcSearch -ProcQuery <re>';Description='Regex on name/path/cmdline';                  Example='-ProcSearch -ProcQuery "(powershell|wscript)"' }
+        # Hunt
+        [pscustomobject]@{ Module='Hunt';       Switch='-Hunt -HuntType <kind>';    Description='unsigned|paths|shortcmd|chain|owners|netactive|all'; Example='-Hunt -HuntType chain' }
+        # Net
+        [pscustomobject]@{ Module='Net';        Switch='-Net [-Sub <s>]';           Description='est (default), tcp, listen, udp, dns, arp, route, ip, firewall, smb'; Example='-Net -Sub listen' }
+        # Persist
+        [pscustomobject]@{ Module='Persist';    Switch='-Persist [-Sub <s>]';       Description='all (default), tasks, tasks-susp, services, services-susp, runkeys, ifeo, wmi, startup, appinit, winlogon, drivers, psprofile'; Example='-Persist -Sub ifeo' }
+        # Forensics
+        [pscustomobject]@{ Module='Forensics';  Switch='-Forensics [-Sub <s>]';     Description='prefetch (default), amcache, shimcache, bam, recentapps, userassist, muicache'; Example='-Forensics -Sub amcache' }
+        # Auth
+        [pscustomobject]@{ Module='Auth';       Switch='-Auth [-Sub <s>]';          Description='priv (default), users, groups, sessions, logons, failed, privlogons, lockouts, explicit, changes, rdp, pwdage'; Example='-Auth -Sub failed -Range 24h' }
+        # Events
+        [pscustomobject]@{ Module='Events';     Switch='-EvtChannels';              Description='List event log channels with non-zero records'; Example='-EvtChannels' }
+        [pscustomobject]@{ Module='Events';     Switch='-EvtQuick -Channel <name> [-Count N]'; Description='Quick read of any channel';        Example='-EvtQuick -Channel "Microsoft-Windows-Sysmon/Operational" -Count 100' }
+        [pscustomobject]@{ Module='Events';     Switch='-EvtSearch -Channel -Id -Level -Keyword -Range'; Description='Filter Windows events'; Example='-EvtSearch -Channel Security -Id 4624,4625 -Range 24h' }
+        # Files
+        [pscustomobject]@{ Module='Files';      Switch='-Files [-Sub <s>]';         Description='recent (default; -Hours N), large (-Mb N), sysmon (-Range / -Id)'; Example='-Files -Sub large -Mb 100' }
+        [pscustomobject]@{ Module='Files';      Switch='-Hash -Path <p> [-Recurse]';Description='SHA256 (default), MD5, SHA1; auto IOC match if -IocFile';     Example='-Hash -Path C:\Temp -Recurse' }
+        [pscustomobject]@{ Module='Files';      Switch='-FileSearch -Path -Pattern';Description='Find files by name pattern';                  Example='-FileSearch -Path C:\Users -Pattern *.ps1 -Recurse' }
+        [pscustomobject]@{ Module='Files';      Switch='-IocMatch -IocFile <csv>';  Description='Sweep host (procs, tcp, dns) against IOC list';                Example='-IocMatch -IocFile .\iocs.csv -IocAgainst all' }
+    )
+    Out-Action -Data $rows -BaseName 'actions' -TopN 100
+}
+
+function Invoke-Action {
+    if ($ListActions) { Action-ListActions; return }
+    if ($Cmd)         { Action-Cmd;         return }
+    if ($PS)          { Action-PS;          return }
+    if ($Script)      { Action-Script;      return }
+    if ($EvtChannels) { Action-EvtChannels; return }
+    if ($EvtQuick)    { Action-EvtQuick;    return }
+    if ($EvtSearch)   { Action-EvtSearch;   return }
+    if ($ProcSearch)  { Action-ProcSearch;  return }
+    if ($Hunt)        { Action-Hunt;        return }
+    if ($Hash)        { Action-Hash;        return }
+    if ($FileSearch)  { Action-FileSearch;  return }
+    if ($IocMatch)    { Action-IocMatch;    return }
+    if ($Procs)       { Action-Procs;       return }
+    if ($Net)         { Action-Net;         return }
+    if ($Persist)     { Action-Persist;     return }
+    if ($Forensics)   { Action-Forensics;   return }
+    if ($Auth)        { Action-Auth;        return }
+    if ($Files)       { Action-Files;       return }
+    try { [Console]::Error.WriteLine("[ERR] no recognised action specified. use -ListActions to see options.") } catch { Write-Error 'no action' }
+    exit 2
+}
+
+# ---------------------------------------------------------------------------
 # ENTRY POINT
 # ---------------------------------------------------------------------------
 try {
-    Main-Loop
+    if ($Script:ActionMode) {
+        Write-Session -Category 'SESSION' -Message "Action-mode session $($Script:TH.SessionId) by $($Script:TH.User) on $($Script:TH.Host)"
+        Invoke-Action
+        Write-Session -Category 'SESSION' -Message 'Action-mode session ended'
+        exit 0
+    } else {
+        Main-Loop
+    }
 } catch {
-    Write-Err "fatal: $($_.Exception.Message)"
-    Write-Session -Category 'FATAL' -Message $_.Exception.Message
+    if ($Script:ActionMode) {
+        try { [Console]::Error.WriteLine("[ERR] " + $_.Exception.Message) } catch { Write-Error $_.Exception.Message }
+        Write-Session -Category 'FATAL' -Message $_.Exception.Message
+        exit 1
+    } else {
+        Write-Err "fatal: $($_.Exception.Message)"
+        Write-Session -Category 'FATAL' -Message $_.Exception.Message
+    }
 }
