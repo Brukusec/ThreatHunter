@@ -105,7 +105,8 @@ param(
     [ValidateSet('Auto','Table','Json','Csv')][string]$Format = 'Auto',
     [switch]$Quiet,
     [int]   $Top = 50,
-    [switch]$ListActions
+    [switch]$ListActions,
+    [switch]$Help
 )
 
 # ---------------------------------------------------------------------------
@@ -2000,7 +2001,7 @@ function Main-Loop {
 $Script:ActionMode = $false
 if ($Cmd -or $PS -or $Script -or $Procs -or $Net -or $Persist -or $Forensics -or
     $Auth -or $Files -or $EvtSearch -or $EvtQuick -or $EvtChannels -or $ProcSearch -or
-    $Hash -or $FileSearch -or $IocMatch -or $Hunt -or $ListActions) {
+    $Hash -or $FileSearch -or $IocMatch -or $Hunt -or $ListActions -or $Help) {
     $Script:ActionMode = $true
 }
 
@@ -2890,10 +2891,94 @@ function Invoke-Action {
     exit 2
 }
 
+
+function Show-Help {
+    $h = @"
+
+ThreatHunter v$($Script:TH.Version) - standalone PowerShell TUI for Windows IR / threat hunting
+
+USAGE
+  .\ThreatHunter.ps1                          launch interactive TUI
+  .\ThreatHunter.ps1 -<action> [-Sub <s>]     run a single action and exit
+  .\ThreatHunter.ps1 -Help                    show this help
+  .\ThreatHunter.ps1 -ListActions             machine-readable list of actions
+
+COMMON PARAMETERS
+  -OutputRoot <path>     session output folder            default .\ThreatHunt_Output
+  -IocFile <csv>         load IOCs at startup
+  -NoLog                 disable session logging entirely
+  -NoColor               force monochrome output
+  -Format <fmt>          Auto | Table | Json | Csv        default Auto
+  -Quiet                 suppress banner (implied with action switches)
+  -Top <n>               cap rows per result              default 50
+
+CMD / POWERSHELL EXECUTION
+  -Cmd "<s>"             run cmd.exe one-liner
+  -PS "<s>"              run a PowerShell expression
+  -Script <p>            run a .ps1 file (body scanned for destructive patterns)
+  -Force                 bypass the destructive-pattern guard
+
+QUICK-VIEW MODULES
+  -Procs [-Sub <s>]      list (default), tree, topcpu, topmem, dlls -ProcId N
+  -Hunt -HuntType <k>    unsigned, paths, shortcmd, chain, owners, netactive, all
+  -Net [-Sub <s>]        est, tcp, listen, udp, dns, arp, route, ip, firewall, smb
+  -Persist [-Sub <s>]    all, tasks, tasks-susp, services, services-susp, runkeys,
+                         ifeo, wmi, startup, appinit, winlogon, drivers, psprofile
+  -Forensics [-Sub <s>]  prefetch, amcache, shimcache, bam, recentapps, userassist, muicache
+  -Auth [-Sub <s>]       priv, users, groups, sessions, logons, failed,
+                         privlogons, lockouts, explicit, changes, rdp, pwdage
+  -Files [-Sub <s>]      recent (-Hours N), large (-Mb N), sysmon (-Range, -Id)
+
+SEARCH ACTIONS
+  -EvtChannels                                                    list channels
+  -EvtQuick -Channel <n> [-Count N]                               quick read
+  -EvtSearch -Channel <n> -Id <ids> -Level <n> -Keyword <re> -Range <r>
+  -ProcSearch -ProcQuery <re>                                     name|path|cmd regex
+  -Hash -Path <p> [-Recurse] [-Algo MD5|SHA1|SHA256]              hash files
+  -FileSearch -Path <p> -Pattern <wildcard> [-Recurse]            find by pattern
+  -IocMatch -IocFile <csv> [-IocAgainst procs|tcp|dns|all]        IOC sweep
+
+TIME RANGES
+  1h, 6h, 24h         last N hours
+  7d, 30d, 90d        last N days
+  2w, 6w              last N weeks
+  3m, 12m             last N calendar months
+  all                 epoch -> now
+  yyyy-MM-dd..yyyy-MM-dd      explicit, inclusive
+
+EXIT CODES
+  0   action ran successfully (the dataset may still be empty)
+  1   fatal exception during execution
+  2   destructive guard fired or required parameter missing
+  3   underlying cmdlet raised (channel not found, access denied, etc.)
+
+EXAMPLES
+  .\ThreatHunter.ps1 -Cmd "whoami /all"
+  .\ThreatHunter.ps1 -PS "Get-LocalGroupMember Administrators"
+  .\ThreatHunter.ps1 -EvtSearch -Channel Security -Id 4624,4625 -Range 24h
+  .\ThreatHunter.ps1 -EvtQuick -Channel "Microsoft-Windows-Sysmon/Operational" -Count 200
+  .\ThreatHunter.ps1 -Hunt -HuntType chain
+  .\ThreatHunter.ps1 -Net -Sub listen
+  .\ThreatHunter.ps1 -Persist -Sub ifeo
+  .\ThreatHunter.ps1 -Auth -Sub failed -Range 24h
+  .\ThreatHunter.ps1 -Forensics -Sub amcache
+  .\ThreatHunter.ps1 -Hash -Path C:\Temp -Recurse -IocFile .\iocs.csv
+  .\ThreatHunter.ps1 -IocMatch -IocFile .\iocs.csv
+
+For the full reference run -ListActions, or read README.md / ThreatHunter-Guide.html.
+
+"@
+    Write-Output $h
+}
+
 # ---------------------------------------------------------------------------
 # ENTRY POINT
 # ---------------------------------------------------------------------------
 try {
+    if ($Help) {
+        Show-Help
+        exit 0
+    }
     if ($Script:ActionMode) {
         Write-Session -Category 'SESSION' -Message "Action-mode session $($Script:TH.SessionId) by $($Script:TH.User) on $($Script:TH.Host)"
         Invoke-Action

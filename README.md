@@ -152,7 +152,8 @@ Every hunting action is also exposed as a **parameter switch**, so the script ru
 .\ThreatHunter.ps1 -Script .\extra-checks.ps1 -Force
 
 # Discover what is available
-.\ThreatHunter.ps1 -ListActions
+.\ThreatHunter.ps1 -Help            # human-readable help (this list)
+.\ThreatHunter.ps1 -ListActions     # machine-readable (JSON-able) action list
 ```
 
 ### Full sub-view matrix
