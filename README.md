@@ -119,42 +119,121 @@ Every hunting action is also exposed as a **parameter switch**, so the script ru
 
 ### Recipes
 
-```powershell
-# Identity & quick context
-.\ThreatHunter.ps1 -Cmd "whoami /all"
-.\ThreatHunter.ps1 -Cmd "ipconfig /all"
-.\ThreatHunter.ps1 -Cmd "net user"
+Examples are shown in the **Defender Live Response form** as the primary pattern (`run <script> -parameters "..."`), because LR is the most common operating context for this script. To run the same actions directly on the host (PowerShell console, RDP, jump box) just drop the `run ... -parameters` wrapper — e.g. `run ThreatHunter.ps1 -parameters "-Procs"` becomes `.\ThreatHunter.ps1 -Procs`.
 
-# PowerShell expressions
-.\ThreatHunter.ps1 -PS "Get-Process | Sort-Object CPU -Descending | Select-Object -First 10"
-.\ThreatHunter.ps1 -PS "Get-LocalGroupMember Administrators"
+```text
+# Discover what is available — start here
+run ThreatHunter.ps1 -parameters "-Help"
+run ThreatHunter.ps1 -parameters "-ListActions"
 
-# Module quick-views (snapshot in JSON when piped)
-.\ThreatHunter.ps1 -Procs
-.\ThreatHunter.ps1 -Net
-.\ThreatHunter.ps1 -Persist
-.\ThreatHunter.ps1 -Auth
-.\ThreatHunter.ps1 -Files -Hours 6
-.\ThreatHunter.ps1 -Forensics
+# Module quick-views (single-token switches — always work through LR)
+run ThreatHunter.ps1 -parameters "-Procs"
+run ThreatHunter.ps1 -parameters "-Net"
+run ThreatHunter.ps1 -parameters "-Persist"
+run ThreatHunter.ps1 -parameters "-Auth"
+run ThreatHunter.ps1 -parameters "-Forensics"
+run ThreatHunter.ps1 -parameters "-EvtChannels"
 
-# Targeted searches
-.\ThreatHunter.ps1 -EvtSearch -Channel Security -Id 4624,4625 -Range 24h
-.\ThreatHunter.ps1 -EvtSearch -Channel "Microsoft-Windows-PowerShell/Operational" -Id 4104 -Keyword "DownloadString" -Range 7d
-.\ThreatHunter.ps1 -ProcSearch -ProcQuery "(powershell|wscript|mshta|rundll32)"
-.\ThreatHunter.ps1 -FileSearch -Path C:\Users -Pattern "*.ps1" -Recurse
+# Sub-views (two simple tokens — also reliable through LR)
+run ThreatHunter.ps1 -parameters "-Hunt -HuntType chain"
+run ThreatHunter.ps1 -parameters "-Hunt -HuntType unsigned"
+run ThreatHunter.ps1 -parameters "-Net -Sub listen"
+run ThreatHunter.ps1 -parameters "-Net -Sub udp"
+run ThreatHunter.ps1 -parameters "-Net -Sub dns"
+run ThreatHunter.ps1 -parameters "-Persist -Sub ifeo"
+run ThreatHunter.ps1 -parameters "-Persist -Sub wmi"
+run ThreatHunter.ps1 -parameters "-Persist -Sub winlogon"
+run ThreatHunter.ps1 -parameters "-Forensics -Sub amcache"
+run ThreatHunter.ps1 -parameters "-Forensics -Sub userassist"
+run ThreatHunter.ps1 -parameters "-Auth -Sub failed -Range 24h"
+run ThreatHunter.ps1 -parameters "-Auth -Sub privlogons -Range 7d"
+run ThreatHunter.ps1 -parameters "-Auth -Sub rdp -Range 7d"
+run ThreatHunter.ps1 -parameters "-Files -Sub large -Mb 200"
 
-# Hashing & IOC sweep
-.\ThreatHunter.ps1 -Hash -Path C:\Temp -Recurse -Algo SHA256 -IocFile .\iocs.csv
-.\ThreatHunter.ps1 -IocMatch -IocFile .\iocs.csv -IocAgainst all
+# Cmd / PowerShell with free-form values — works through LR provided
+# the value does not contain spaces, commas, quotes or special chars.
+run ThreatHunter.ps1 -parameters "-Cmd whoami"
+run ThreatHunter.ps1 -parameters "-PS Get-Date"
+run ThreatHunter.ps1 -parameters "-PS Get-Process"
+run ThreatHunter.ps1 -parameters "-Cmd hostname"
 
-# Run a .ps1 file (with destructive-pattern guard)
-.\ThreatHunter.ps1 -Script .\extra-checks.ps1
-.\ThreatHunter.ps1 -Script .\extra-checks.ps1 -Force
+# Event filtering (single ID + simple range tokens)
+run ThreatHunter.ps1 -parameters "-EvtSearch -Channel Security -Id 4625 -Range 24h"
+run ThreatHunter.ps1 -parameters "-EvtSearch -Channel System -Id 7045 -Range 7d"
+run ThreatHunter.ps1 -parameters "-EvtQuick -Channel Security -Count 100"
 
-# Discover what is available
-.\ThreatHunter.ps1 -Help            # human-readable help (this list)
-.\ThreatHunter.ps1 -ListActions     # machine-readable (JSON-able) action list
+# Hashing & IOC sweep (paths without spaces)
+run ThreatHunter.ps1 -parameters "-Hash -Path C:\Temp -Recurse"
+run ThreatHunter.ps1 -parameters "-IocMatch -IocFile iocs.csv -IocAgainst all"
+
+# Run a .ps1 you uploaded with PutFile
+run ThreatHunter.ps1 -parameters "-Script extra-checks.ps1"
 ```
+
+The same set of switches works identically from a direct PowerShell prompt, just without the `run ... -parameters` wrapper:
+
+```powershell
+.\ThreatHunter.ps1 -Help
+.\ThreatHunter.ps1 -Procs
+.\ThreatHunter.ps1 -Hunt -HuntType chain
+.\ThreatHunter.ps1 -Cmd "whoami /all"            # values with spaces are fine here
+.\ThreatHunter.ps1 -EvtSearch -Channel Security -Id 4624,4625 -Range 24h
+```
+
+### Defender Live Response — what actually works
+
+Live Response does **not** pass `-parameters` directly to PowerShell. The portal/agent pre-parses the argument string and rejects anything it cannot reconcile with the script's declared parameters, returning:
+
+> Error: User input — Parts of the command couldn't be recognized.
+
+The script is fully compatible — the friction is in how Live Response splits the argument string before it ever reaches PowerShell. To stay on the happy path:
+
+**1. Upload the script via the *Library*, not `PutFile`.** In the Microsoft 365 Defender portal go to *Settings → Endpoints → Live response → Library*. Upload `ThreatHunter.ps1`. **Declare every parameter you intend to use** in the Library entry (name + description). Without this, no switch will be accepted.
+
+**2. Confirmed-working invocation patterns.** These have been tested end-to-end through Live Response:
+
+```text
+run ThreatHunter.ps1 -parameters "-Help"
+run ThreatHunter.ps1 -parameters "-ListActions"
+run ThreatHunter.ps1 -parameters "-Procs"
+run ThreatHunter.ps1 -parameters "-Net"
+run ThreatHunter.ps1 -parameters "-Persist"
+run ThreatHunter.ps1 -parameters "-Auth"
+run ThreatHunter.ps1 -parameters "-Forensics"
+run ThreatHunter.ps1 -parameters "-EvtChannels"
+```
+
+Any pure boolean switch is safe.
+
+**3. What the pre-parser cannot handle (yet).** Avoid these shapes in the `-parameters` string — they trigger *Parts of the command couldn't be recognized*:
+
+- Whitespace inside a value — `"-Cmd 'whoami /all'"` splits into two tokens.
+- Commas inside arrays — `"-Id 4624,4625"` splits on the comma.
+- Nested quotes — `"-Cmd 'foo bar'"` and `"-PS \"Get-Date\""` both get mangled.
+- Special characters — `|`, `;`, `&`, `(`, `)`, `<`, `>`, backticks.
+- Long values (~> 200 characters) get truncated.
+
+**4. Practical patterns until a Base64 token mode lands.** For anything more complex than a boolean switch:
+
+- Pick a sub-view that already encodes the intent without needing a free-text argument:
+  ```text
+  run ThreatHunter.ps1 -parameters "-Hunt -HuntType chain"     # works — both are simple tokens
+  run ThreatHunter.ps1 -parameters "-Net -Sub listen"          # works
+  run ThreatHunter.ps1 -parameters "-Persist -Sub ifeo"        # works
+  run ThreatHunter.ps1 -parameters "-Forensics -Sub amcache"   # works
+  ```
+- For `-Cmd` / `-PS` with a value that contains spaces or special characters, run the script **once** to drop the session folder, then run the command natively inside the same Live Response shell, then `GetFile` the `session.log`.
+
+**5. Pulling the session back.** Whatever you run, the action is captured in the session folder. After the command completes:
+
+```text
+run ThreatHunter.ps1 -parameters "-PS Get-Date"   # or any working invocation
+# locate the session folder created on the host:
+ls C:\Tools\ThreatHunter\ThreatHunt_Output
+GetFile "C:\Tools\ThreatHunter\ThreatHunt_Output\<session-id>\session.log"
+GetFile "C:\Tools\ThreatHunter\ThreatHunt_Output\<session-id>\report.md"
+```
+
 
 ### Full sub-view matrix
 

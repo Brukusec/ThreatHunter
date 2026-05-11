@@ -213,6 +213,7 @@
     <a class="section">Operations</a>
     <a href="#workflows">Hunting workflows</a>
     <a href="#liveresponse">Live Response mode</a>
+    <a href="#lr-compat">LR — what works</a>
     <a href="#output">Output &amp; evidence</a>
     <a href="#iocs">IOC CSV format</a>
     <a href="#safety">Safety &amp; destructive ops</a>
@@ -636,49 +637,53 @@
     <dt>-ListActions</dt><dd>Print every action with example invocations and exit.</dd>
   </dl>
 
-  <h3>Sub-view examples</h3>
-<pre><span class="c"># Process work</span>
-<span class="k">.\ThreatHunter.ps1</span> -Procs -Sub tree
-<span class="k">.\ThreatHunter.ps1</span> -Procs -Sub topcpu
-<span class="k">.\ThreatHunter.ps1</span> -Procs -Sub dlls -ProcId 1234
+  <h3>Sub-view examples &mdash; Defender Live Response form</h3>
+  <p>Examples below use the <strong>Live Response form</strong> (<code>run &lt;script&gt; -parameters "..."</code>) as the primary pattern. To run any of these directly on the host, drop the <code>run ... -parameters</code> wrapper.</p>
+<pre><span class="c"># Discover what is available - start here</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Help"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-ListActions"</span>
 
-<span class="c"># Process hunting</span>
-<span class="k">.\ThreatHunter.ps1</span> -Hunt -HuntType unsigned
+<span class="c"># Module quick-views</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Procs"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Net"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Persist"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Auth"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Forensics"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-EvtChannels"</span>
+
+<span class="c"># Sub-views (two simple tokens)</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Hunt -HuntType chain"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Hunt -HuntType unsigned"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Net -Sub listen"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Net -Sub udp"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Net -Sub dns"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Persist -Sub ifeo"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Persist -Sub wmi"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Persist -Sub winlogon"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Forensics -Sub amcache"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Forensics -Sub userassist"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Auth -Sub failed -Range 24h"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Auth -Sub privlogons -Range 7d"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Auth -Sub rdp -Range 7d"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Files -Sub large -Mb 200"</span>
+
+<span class="c"># Cmd / PS with single-token values (avoid spaces, commas, quotes through LR)</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Cmd whoami"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-PS Get-Date"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-PS Get-Process"</span>
+
+<span class="c"># Event filtering and hashing</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-EvtSearch -Channel Security -Id 4625 -Range 24h"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-EvtQuick -Channel Security -Count 100"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-Hash -Path C:\Temp -Recurse"</span>
+<span class="k">run ThreatHunter.ps1 -parameters</span> <span class="s">"-IocMatch -IocFile iocs.csv -IocAgainst all"</span>
+
+<span class="c"># Direct PowerShell on the host (no LR wrapper)</span>
+<span class="k">.\ThreatHunter.ps1</span> -Help
+<span class="k">.\ThreatHunter.ps1</span> -Procs
 <span class="k">.\ThreatHunter.ps1</span> -Hunt -HuntType chain
-<span class="k">.\ThreatHunter.ps1</span> -Hunt -HuntType all
-
-<span class="c"># Network drill-down</span>
-<span class="k">.\ThreatHunter.ps1</span> -Net -Sub listen
-<span class="k">.\ThreatHunter.ps1</span> -Net -Sub udp
-<span class="k">.\ThreatHunter.ps1</span> -Net -Sub dns
-<span class="k">.\ThreatHunter.ps1</span> -Net -Sub firewall
-
-<span class="c"># Persistence drill-down</span>
-<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub ifeo
-<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub wmi
-<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub winlogon
-<span class="k">.\ThreatHunter.ps1</span> -Persist -Sub psprofile
-
-<span class="c"># Forensic artefacts</span>
-<span class="k">.\ThreatHunter.ps1</span> -Forensics -Sub amcache
-<span class="k">.\ThreatHunter.ps1</span> -Forensics -Sub userassist
-<span class="k">.\ThreatHunter.ps1</span> -Forensics -Sub muicache
-
-<span class="c"># Auth investigation</span>
-<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub failed -Range 24h
-<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub privlogons -Range 7d
-<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub changes -Range 30d
-<span class="k">.\ThreatHunter.ps1</span> -Auth -Sub rdp -Range 7d
-
-<span class="c"># Files</span>
-<span class="k">.\ThreatHunter.ps1</span> -Files -Sub large -Mb 200
-<span class="k">.\ThreatHunter.ps1</span> -Files -Sub sysmon -Range 24h -Id 1,3,11
-
-<span class="c"># Events</span>
-<span class="k">.\ThreatHunter.ps1</span> -EvtChannels
-<span class="k">.\ThreatHunter.ps1</span> -EvtQuick -Channel "Microsoft-Windows-Sysmon/Operational" -Count 200
-
-</pre>
+<span class="k">.\ThreatHunter.ps1</span> -Cmd <span class="s">"whoami /all"</span>            <span class="c"># spaces fine here</span>
+<span class="k">.\ThreatHunter.ps1</span> -EvtSearch -Channel Security -Id 4624,4625 -Range 24h</pre>
 
   <h3>Defender Live Response — full recipe</h3>
 <pre><span class="c"># 1. Upload the script + (optional) IOC list once</span>
@@ -707,6 +712,59 @@ eport.md"</pre>
   </table>
 
   <div class="note"><span class="lbl">Tip</span> &nbsp; The destructive-pattern guard works the same way in non-interactive mode &mdash; it rejects the action with a clean <code>[ERR] ...</code> on stderr and exit code 2. Use <code>-Force</code> only when you know exactly what you are running.</div>
+
+  
+  <!-- ============================ LR COMPAT ============================ -->
+  <h2 id="lr-compat">Defender Live Response &mdash; what actually works</h2>
+
+  <p>Live Response does <strong>not</strong> pass <code>-parameters</code> directly to PowerShell. The portal/agent pre-parses the argument string and rejects anything it cannot reconcile with the script&rsquo;s declared parameters, returning:</p>
+
+  <div class="warn"><span class="lbl">Error</span> &nbsp; User input &mdash; Parts of the command couldn&rsquo;t be recognized.</div>
+
+  <p>The script itself is fully compatible &mdash; the friction is in how Live Response splits the argument string before it ever reaches PowerShell. Stay on the happy path with the four rules below.</p>
+
+  <h3>1. Upload via the Library, not PutFile</h3>
+  <p>In the Microsoft 365 Defender portal go to <em>Settings &rarr; Endpoints &rarr; Live response &rarr; Library</em>. Upload <code>ThreatHunter.ps1</code> and <strong>declare every parameter you intend to use</strong> in the Library entry (name + description). Without that declaration, no switch is accepted.</p>
+
+  <h3>2. Confirmed-working invocation patterns</h3>
+  <p>Pure boolean switches and single-token values are safe:</p>
+<pre>run ThreatHunter.ps1 -parameters "-Help"
+run ThreatHunter.ps1 -parameters "-ListActions"
+run ThreatHunter.ps1 -parameters "-Procs"
+run ThreatHunter.ps1 -parameters "-Net"
+run ThreatHunter.ps1 -parameters "-Persist"
+run ThreatHunter.ps1 -parameters "-Auth"
+run ThreatHunter.ps1 -parameters "-Forensics"
+run ThreatHunter.ps1 -parameters "-EvtChannels"
+run ThreatHunter.ps1 -parameters "-Hunt -HuntType chain"
+run ThreatHunter.ps1 -parameters "-Net -Sub listen"
+run ThreatHunter.ps1 -parameters "-Persist -Sub ifeo"
+run ThreatHunter.ps1 -parameters "-Forensics -Sub amcache"</pre>
+
+  <h3>3. What the pre-parser cannot handle</h3>
+  <p>Avoid these shapes in the <code>-parameters</code> string &mdash; they trigger <em>Parts of the command couldn&rsquo;t be recognized</em>:</p>
+  <ul>
+    <li>Whitespace inside a value &mdash; <code>"-Cmd 'whoami /all'"</code> splits into two tokens.</li>
+    <li>Commas inside arrays &mdash; <code>"-Id 4624,4625"</code> splits on the comma.</li>
+    <li>Nested quotes &mdash; <code>"-Cmd 'foo bar'"</code> and <code>"-PS "Get-Date""</code> both get mangled.</li>
+    <li>Special characters &mdash; <code>|</code>, <code>;</code>, <code>&amp;</code>, <code>(</code>, <code>)</code>, <code>&lt;</code>, <code>&gt;</code>, backticks.</li>
+    <li>Long values (roughly &gt; 200 characters) get truncated.</li>
+  </ul>
+
+  <h3>4. Practical patterns until a Base64 token mode lands</h3>
+  <p>For anything more complex than a boolean switch, prefer a sub-view that already encodes the intent without needing a free-text argument:</p>
+<pre>run ThreatHunter.ps1 -parameters "-Hunt -HuntType chain"
+run ThreatHunter.ps1 -parameters "-Net -Sub listen"
+run ThreatHunter.ps1 -parameters "-Persist -Sub ifeo"
+run ThreatHunter.ps1 -parameters "-Forensics -Sub amcache"</pre>
+
+  <p>For <code>-Cmd</code> / <code>-PS</code> values containing spaces or special characters, drop into the Live Response shell once to lay the session folder down with a simple call, then run the complex command natively in the same Live Response session, and pull the <code>session.log</code> back with <code>GetFile</code>.</p>
+
+  <h3>Pulling the session back</h3>
+<pre>run ThreatHunter.ps1 -parameters "-PS Get-Date"
+ls C:\Tools\ThreatHunter\ThreatHunt_Output
+GetFile "C:\Tools\ThreatHunter\ThreatHunt_Output\&lt;session-id&gt;\session.log"
+GetFile "C:\Tools\ThreatHunter\ThreatHunt_Output\&lt;session-id&gt;\report.md"</pre>
 
   <h2 id="output">Output &amp; evidence</h2>
   <p>Every session creates its own folder so you can ship the whole thing as evidence:</p>
